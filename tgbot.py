@@ -9,6 +9,7 @@ os.environ.pop('https_proxy', None)
 import random
 import string
 import threading
+import sys
 from flask import Flask
 import telebot
 from telebot import types
@@ -28,14 +29,24 @@ TARIFFS = {
     "lifetime": {"days": 36500, "price": 700, "name": "Навсегда"}
 }
 
-bot = telebot.TeleBot(TOKEN)
+print("[Система]: Инициализация бота...")
+try:
+    bot = telebot.TeleBot(TOKEN)
+except Exception as e:
+    print(f"[Ошибка инициализации бота]: {e}")
+    sys.exit(1)
 
 # === ИНИЦИАЛИЗАЦИЯ FIREBASE ===
-cred = credentials.Certificate("firebase_key.json")
-firebase_admin.initialize_app(cred)
-db = firestore.client()
+try:
+    cred = credentials.Certificate("firebase_key.json")
+    firebase_admin.initialize_app(cred)
+    db = firestore.client()
+    print("[Система]: Firebase успешно подключен.")
+except Exception as e:
+    print(f"[Ошибка Firebase]: {e}")
+    sys.exit(1)
 
-# === МИНИ-СЕРВЕР ДЛЯ RENDER (чтобы бот не засыпал) ===
+# === МИНИ-СЕРВЕР ДЛЯ RENDER ===
 app = Flask(__name__)
 
 @app.route('/')
@@ -44,14 +55,14 @@ def index():
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port, use_reloader=False)
 
 def generate_key_code():
     part1 = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
     part2 = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
     return f"UNIVERSE-{part1}-{part2}"
 
-# === КЛАВИАТУРА ГЛАВНОГО МЕНЮ ===
+# === КОМАНДЫ БОТА ===
 def main_menu(username):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     btn_profile = types.KeyboardButton("👤 Мой профиль")
@@ -241,7 +252,7 @@ def generate_key_handler(message):
     db.collection('keys').document(new_key).set({
         'key_code': new_key,
         'duration_days': 30,
-        'is_used': False,
+        'is_use': False,
         'used_by': None
     })
     
@@ -257,10 +268,14 @@ def help_handler(message):
 
 # === ЗАПУСК ===
 if __name__ == "__main__":
-    # Запускаем Flask в отдельном потоке, чтобы Render видел открытый порт
-    t = threading.Thread(target=run_web)
-    t.daemon = True
-    t.start()
-    
-    print("[Система]: Бот и веб-сервер запущены.")
-    bot.infinity_polling(timeout=10, long_polling_timeout=5)
+    # Запускаем Flask в отдельном потоке
+    web_thread = threading.Thread(target=run_web)
+    web_thread.daemon = True
+    web_thread.start()
+    print("[Система]: Веб-сервер запущен в фоновом режиме.")
+
+    print("[Система]: Запуск бесконечного опроса Telegram (infinity_polling)...")
+    try:
+        bot.infinity_polling(timeout=10, long_polling_timeout=5)
+    except Exception as e:
+        print(f"[Ошибка работы бота]: {e}")
