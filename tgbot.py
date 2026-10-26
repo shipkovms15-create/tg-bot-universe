@@ -8,6 +8,8 @@ os.environ.pop('https_proxy', None)
 
 import random
 import string
+import threading
+from flask import Flask
 import telebot
 from telebot import types
 
@@ -15,15 +17,10 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 
 # === НАСТРОЙКИ ===
-TOKEN = "8503313877:AAEonBkSLpmTLZ4c-aCmpOAWKnCLNZRSbgg"  # Токен твоего бота от BotFather
-
-# Твой юзернейм в Telegram (без @), чтобы получить права администратора
+TOKEN = "8503313877:AAEonBkSLpmTLZ4c-aCmpOAWKnCLNZRSbgg"
 ADMIN_USERNAMES = ["molodoypacanzatazit"]
-
-# Ссылка на твой закрытый канал с программой
 PRIVATE_CHANNEL_LINK = "https://t.me/+L6ELmXSLFw9lNjMy"
 
-# === ТАРИФЫ И ЦЕНЫ ===
 TARIFFS = {
     "30": {"days": 30, "price": 150, "name": "30 дней"},
     "90": {"days": 90, "price": 250, "name": "90 дней"},
@@ -34,10 +31,20 @@ TARIFFS = {
 bot = telebot.TeleBot(TOKEN)
 
 # === ИНИЦИАЛИЗАЦИЯ FIREBASE ===
-# Файл ключа firebase_key.json должен лежать в корне проекта рядом с этим скриптом
 cred = credentials.Certificate("firebase_key.json")
 firebase_admin.initialize_app(cred)
 db = firestore.client()
+
+# === МИНИ-СЕРВЕР ДЛЯ RENDER (чтобы бот не засыпал) ===
+app = Flask(__name__)
+
+@app.route('/')
+def index():
+    return "Universe AI Bot is active and running!"
+
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
 
 def generate_key_code():
     part1 = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
@@ -62,7 +69,6 @@ def main_menu(username):
     markup.add(btn_help)
     return markup
 
-# === КОМАНДА /START ===
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
     user_id = message.from_user.id
@@ -86,7 +92,6 @@ def start_cmd(message):
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=main_menu(username))
 
-# === ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ ===
 @bot.message_handler(func=lambda m: m.text == "👤 Мой профиль")
 def profile_handler(message):
     user_ref = db.collection('users').document(str(message.from_user.id))
@@ -103,7 +108,6 @@ def profile_handler(message):
     )
     bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
-# === ПОКУПКА ПОДПИСКИ ===
 @bot.message_handler(func=lambda m: m.text == "💳 Купить подписку")
 def buy_handler(message):
     markup = types.InlineKeyboardMarkup(row_width=1)
@@ -124,12 +128,10 @@ def buy_handler(message):
 def tariff_selected(call):
     tariff_key = call.data.replace("select_tariff_", "")
     tariff = TARIFFS.get(tariff_key)
-    
     if not tariff:
         return
 
     pay_url = "https://rolley.pay/invoice/example_link" 
-    
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("🔗 Оплатить счет", url=pay_url))
     markup.add(types.InlineKeyboardButton("🔄 Проверить оплату", callback_data=f"check_pay_{tariff_key}"))
@@ -153,22 +155,19 @@ def verify_payment_callback(call):
     tariff = TARIFFS.get(tariff_key)
     user_id = call.from_user.id
     username = call.from_user.username
-    
-    is_paid = True  # Заглушка успешной оплаты
+    is_paid = True
     
     if is_paid and tariff:
         new_key = generate_key_code()
         days = tariff["days"]
         sub_text = f"Активна ({tariff['name']})" if days < 36500 else "Активна (Навсегда)"
         
-        # Сохраняем пользователя в Firebase
         db.collection('users').document(str(user_id)).set({
             'user_id': user_id,
             'username': username,
             'sub_expires': sub_text
         }, merge=True)
         
-        # Сохраняем сгенерированный ключ в Firebase
         db.collection('keys').document(new_key).set({
             'key_code': new_key,
             'duration_days': days,
@@ -189,10 +188,7 @@ def verify_payment_callback(call):
             ),
             parse_mode="Markdown"
         )
-    else:
-        bot.answer_callback_query(call.id, "Оплата еще не поступила. Попробуй позже.", show_alert=True)
 
-# === АКТИВАЦИЯ КЛЮЧА В БОТЕ ===
 @bot.message_handler(func=lambda m: m.text == "🔑 Активировать ключ")
 def key_prompt_handler(message):
     msg = bot.send_message(
@@ -204,7 +200,6 @@ def key_prompt_handler(message):
 
 def process_key_activation(message):
     user_key = message.text.strip().upper()
-    
     if not user_key.startswith("UNIVERSE-"):
         bot.send_message(message.chat.id, "❌ **Неверный формат!** Ключ должен начинаться с `UNIVERSE-`.", parse_mode="Markdown")
         return
@@ -222,13 +217,7 @@ def process_key_activation(message):
             duration = data.get('duration_days', 30)
             sub_desc = f"Активна ({duration} дней)" if duration < 36500 else "Активна (Навсегда)"
             
-            # Помечаем ключ как использованный в Firebase
-            key_ref.update({
-                'is_used': True,
-                'used_by': message.from_user.id
-            })
-            
-            # Обновляем подписку юзера в Firebase
+            key_ref.update({'is_used': True, 'used_by': message.from_user.id})
             db.collection('users').document(str(message.from_user.id)).set({
                 'user_id': message.from_user.id,
                 'username': message.from_user.username,
@@ -241,7 +230,6 @@ def process_key_activation(message):
             )
             bot.send_message(message.chat.id, success_msg, parse_mode="Markdown")
 
-# === АДМИНСКАЯ ГЕНЕРАЦИЯ КЛЮЧЕЙ ===
 @bot.message_handler(func=lambda m: m.text == "🎲 Сгенерировать ключ (Админ)")
 def generate_key_handler(message):
     username = message.from_user.username
@@ -250,8 +238,6 @@ def generate_key_handler(message):
         return
 
     new_key = generate_key_code()
-    
-    # Записываем новый неиспользованный ключ в Firebase Firestore
     db.collection('keys').document(new_key).set({
         'key_code': new_key,
         'duration_days': 30,
@@ -269,7 +255,12 @@ def generate_key_handler(message):
 def help_handler(message):
     bot.send_message(message.chat.id, "🛠 **Поддержка Universe AI**\n\nПо всем вопросам обращайтесь в поддержку.", parse_mode="Markdown")
 
-# === ЗАПУСК БОТА ===
+# === ЗАПУСК ===
 if __name__ == "__main__":
-    print("[Система]: Бот запущен с подключением к Firebase.")
+    # Запускаем Flask в отдельном потоке, чтобы Render видел открытый порт
+    t = threading.Thread(target=run_web)
+    t.daemon = True
+    t.start()
+    
+    print("[Система]: Бот и веб-сервер запущены.")
     bot.infinity_polling(timeout=10, long_polling_timeout=5)
