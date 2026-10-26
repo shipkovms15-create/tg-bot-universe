@@ -1,18 +1,18 @@
 import os
+import random
+import string
+from flask import Flask, request
+import telebot
+from telebot import types
+
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 # Сбрасываем системные переменные прокси
 os.environ.pop('HTTP_PROXY', None)
 os.environ.pop('HTTPS_PROXY', None)
 os.environ.pop('http_proxy', None)
 os.environ.pop('https_proxy', None)
-
-import random
-import string
-import telebot
-from telebot import types
-
-import firebase_admin
-from firebase_admin import credentials, firestore
 
 # === НАСТРОЙКИ ===
 TOKEN = "8503313877:AAEonBkSLpmTLZ4c-aCmpOAWKnCLNZRSbgg"  # Токен твоего бота от BotFather
@@ -37,6 +37,22 @@ bot = telebot.TeleBot(TOKEN)
 cred = credentials.Certificate("firebase_key.json")
 firebase_admin.initialize_app(cred)
 db = firestore.client()
+
+# === FLASK СЕРВЕР ДЛЯ RENDER WEB SERVICE ===
+app = Flask(__name__)
+
+@app.route('/')
+def index():
+    return "Universe AI Bot is active and running!"
+
+@app.route(f'/{TOKEN}', methods=['POST'])
+def webhook():
+    if request.headers.get('content-type', '').startswith('application/json'):
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return '', 200
+    return 'Forbidden', 403
 
 def generate_key_code():
     part1 = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
@@ -259,7 +275,17 @@ def generate_key_handler(message):
 def help_handler(message):
     bot.send_message(message.chat.id, "🛠 **Поддержка Universe AI**\n\nПо всем вопросам обращайтесь в поддержку.", parse_mode="Markdown")
 
-# === ЗАПУСК БОТА ===
+# === ЗАПУСК ДЛЯ WEB SERVICE НА RENDER ===
 if __name__ == "__main__":
-    print("[Система]: Бот запущен через Polling с Firebase.")
-    bot.infinity_polling(timeout=10, long_polling_timeout=5)
+    RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")
+    if RENDER_URL:
+        webhook_url = f"{RENDER_URL}/{TOKEN}"
+        try:
+            bot.remove_webhook()
+        except Exception:
+            pass
+        bot.set_webhook(url=webhook_url)
+        print(f"[Система]: Вебхук установлен на {webhook_url}")
+    
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
