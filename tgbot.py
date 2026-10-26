@@ -261,5 +261,5 @@ def help_handler(message):
 
 # === ЗАПУСК БОТА ===
 if __name__ == "__main__":
-    print("[Система]: Бот запущен.")
+    print("[Система]: Бот запущен через Polling с Firebase.")
     bot.infinity_polling(timeout=10, long_polling_timeout=5)
