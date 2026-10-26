@@ -1,16 +1,8 @@
 import os
-
-# Сбрасываем системные переменные прокси
-os.environ.pop('HTTP_PROXY', None)
-os.environ.pop('HTTPS_PROXY', None)
-os.environ.pop('http_proxy', None)
-os.environ.pop('https_proxy', None)
-
 import random
 import string
-import threading
 import sys
-from flask import Flask
+from flask import Flask, request
 import telebot
 from telebot import types
 
@@ -29,40 +21,36 @@ TARIFFS = {
     "lifetime": {"days": 36500, "price": 700, "name": "Навсегда"}
 }
 
-print("[Система]: Инициализация бота...")
-try:
-    bot = telebot.TeleBot(TOKEN)
-except Exception as e:
-    print(f"[Ошибка инициализации бота]: {e}")
-    sys.exit(1)
+bot = telebot.TeleBot(TOKEN)
 
 # === ИНИЦИАЛИЗАЦИЯ FIREBASE ===
-try:
-    cred = credentials.Certificate("firebase_key.json")
-    firebase_admin.initialize_app(cred)
-    db = firestore.client()
-    print("[Система]: Firebase успешно подключен.")
-except Exception as e:
-    print(f"[Ошибка Firebase]: {e}")
-    sys.exit(1)
+cred = credentials.Certificate("firebase_key.json")
+firebase_admin.initialize_app(cred)
+db = firestore.client()
 
-# === МИНИ-СЕРВЕР ДЛЯ RENDER ===
+# === FLASK СЕРВЕР И ВЕБХУК ===
 app = Flask(__name__)
 
 @app.route('/')
 def index():
     return "Universe AI Bot is active and running!"
 
-def run_web():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port, use_reloader=False)
+@app.route(f'/{TOKEN}', methods=['POST'])
+def webhook():
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return '', 200
+    else:
+        return 'Forbidden', 403
 
 def generate_key_code():
     part1 = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
     part2 = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
     return f"UNIVERSE-{part1}-{part2}"
 
-# === КОМАНДЫ БОТА ===
+# === МЕНЮ И КОМАНДЫ ===
 def main_menu(username):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     btn_profile = types.KeyboardButton("👤 Мой профиль")
@@ -153,8 +141,8 @@ def tariff_selected(call):
         text=(
             f"🛒 **Выбран тариф:** {tariff['name']}\n"
             f"💰 **К оплате:** `{tariff['price']} руб.`\n\n"
-            f"1. Нажми кнопку **«Оплатить счет»** и соверши перевод.\n"
-            f"2. После оплаты нажми **«Проверить оплату»** для автоматического получения ключа."
+            f"1. Нажми кнопку **«Оплатить счет»**.\n"
+            f"2. После оплаты нажми **«Проверить оплату»**."
         ),
         parse_mode="Markdown",
         reply_markup=markup
@@ -193,9 +181,8 @@ def verify_payment_callback(call):
             text=(
                 f"🎉 **Оплата успешно подтверждена!**\n\n"
                 f"📦 **Тариф:** {tariff['name']}\n"
-                f"🔑 **Твой персональный ключ:** `{new_key}`\n"
-                f"✅ Подписка активирована в профиле!\n\n"
-                f"📥 **Ссылка на скачивание программы:** {PRIVATE_CHANNEL_LINK}"
+                f"🔑 **Ключ:** `{new_key}`\n\n"
+                f"📥 **Ссылка на скачивание:** {PRIVATE_CHANNEL_LINK}"
             ),
             parse_mode="Markdown"
         )
@@ -212,7 +199,7 @@ def key_prompt_handler(message):
 def process_key_activation(message):
     user_key = message.text.strip().upper()
     if not user_key.startswith("UNIVERSE-"):
-        bot.send_message(message.chat.id, "❌ **Неверный формат!** Ключ должен начинаться с `UNIVERSE-`.", parse_mode="Markdown")
+        bot.send_message(message.chat.id, "❌ **Неверный формат!**", parse_mode="Markdown")
         return
 
     key_ref = db.collection('keys').document(user_key)
@@ -235,47 +222,39 @@ def process_key_activation(message):
                 'sub_expires': sub_desc
             }, merge=True)
             
-            success_msg = (
-                f"✅ **Ключ {user_key} успешно активирован!**\n\n"
-                f"📥 **Ссылка на скачивание программы:** {PRIVATE_CHANNEL_LINK}"
-            )
-            bot.send_message(message.chat.id, success_msg, parse_mode="Markdown")
+            bot.send_message(message.chat.id, f"✅ **Ключ {user_key} активирован!**\n\n📥 **Ссылка:** {PRIVATE_CHANNEL_LINK}", parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text == "🎲 Сгенерировать ключ (Админ)")
 def generate_key_handler(message):
     username = message.from_user.username
     if not username or username.lower() not in [admin.lower() for admin in ADMIN_USERNAMES]:
-        bot.send_message(message.chat.id, "❌ У тебя нет прав для выполнения этой команды.", parse_mode="Markdown")
+        bot.send_message(message.chat.id, "❌ У тебя нет прав.", parse_mode="Markdown")
         return
 
     new_key = generate_key_code()
     db.collection('keys').document(new_key).set({
         'key_code': new_key,
         'duration_days': 30,
-        'is_use': False,
+        'is_used': False,
         'used_by': None
     })
     
-    bot.send_message(
-        message.chat.id, 
-        f"🎲 **Сгенерирован новый ключ (30 дней):**\n`{new_key}`\n\n_Сохранен в облачную базу Firebase._", 
-        parse_mode="Markdown"
-    )
+    bot.send_message(message.chat.id, f"🎲 **Сгенерирован ключ:**\n`{new_key}`", parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text == "ℹ️ Помощь")
 def help_handler(message):
-    bot.send_message(message.chat.id, "🛠 **Поддержка Universe AI**\n\nПо всем вопросам обращайтесь в поддержку.", parse_mode="Markdown")
+    bot.send_message(message.chat.id, "🛠 **Поддержка Universe AI**", parse_mode="Markdown")
 
 # === ЗАПУСК ===
 if __name__ == "__main__":
-    # Запускаем Flask в отдельном потоке
-    web_thread = threading.Thread(target=run_web)
-    web_thread.daemon = True
-    web_thread.start()
-    print("[Система]: Веб-сервер запущен в фоновом режиме.")
+    RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")
+    if RENDER_URL:
+        webhook_url = f"{RENDER_URL}/{TOKEN}"
+        bot.remove_webhook()
+        bot.set_webhook(url=webhook_url)
+        print(f"[Система]: Вебхук успешно установлен на {webhook_url}")
+    else:
+        print("[Предупреждение]: RENDER_EXTERNAL_URL не найден.")
 
-    print("[Система]: Запуск бесконечного опроса Telegram (infinity_polling)...")
-    try:
-        bot.infinity_polling(timeout=10, long_polling_timeout=5)
-    except Exception as e:
-        print(f"[Ошибка работы бота]: {e}")
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
