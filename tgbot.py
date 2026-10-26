@@ -6,11 +6,13 @@ os.environ.pop('HTTPS_PROXY', None)
 os.environ.pop('http_proxy', None)
 os.environ.pop('https_proxy', None)
 
-import sqlite3
 import random
 import string
 import telebot
 from telebot import types
+
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 # === НАСТРОЙКИ ===
 TOKEN = "8503313877:AAEonBkSLpmTLZ4c-aCmpOAWKnCLNZRSbgg"  # Токен твоего бота от BotFather
@@ -31,42 +33,11 @@ TARIFFS = {
 
 bot = telebot.TeleBot(TOKEN)
 
-# === ПУТЬ К БАЗЕ ДАННЫХ (теперь рядом со скриптом для хостинга) ===
-DB_PATH = os.path.join(os.path.dirname(__file__), "universe_system.db")
-
-# === ИНИЦИАЛИЗАЦИЯ И МИГРАЦИЯ БАЗЫ ДАННЫХ ===
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    # Таблица пользователей
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            username TEXT,
-            sub_expires TEXT DEFAULT 'Не активна'
-        )
-    ''')
-    
-    # Таблица ключей
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS keys (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            key_code TEXT UNIQUE,
-            duration_days INTEGER DEFAULT 0,
-            is_used INTEGER DEFAULT 0,
-            used_by INTEGER
-        )
-    ''')
-    
-    # Авто-миграция для старых баз данных
-    try:
-        cursor.execute('ALTER TABLE keys ADD COLUMN duration_days INTEGER DEFAULT 0')
-    except sqlite3.OperationalError:
-        pass
-        
-    conn.commit()
-    conn.close()
+# === ИНИЦИАЛИЗАЦИЯ FIREBASE ===
+# Файл ключа firebase_key.json должен лежать в корне проекта рядом с этим скриптом
+cred = credentials.Certificate("firebase_key.json")
+firebase_admin.initialize_app(cred)
+db = firestore.client()
 
 def generate_key_code():
     part1 = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
@@ -94,15 +65,20 @@ def main_menu(username):
 # === КОМАНДА /START ===
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
-    init_db()
+    user_id = message.from_user.id
     username = message.from_user.username
     
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)', 
-                   (message.from_user.id, username))
-    conn.commit()
-    conn.close()
+    user_ref = db.collection('users').document(str(user_id))
+    doc = user_ref.get()
+    
+    if not doc.exists:
+        user_ref.set({
+            'user_id': user_id,
+            'username': username,
+            'sub_expires': 'Не активна'
+        })
+    else:
+        user_ref.update({'username': username})
     
     welcome_text = (
         f"👋 Привет, **{message.from_user.first_name}**!\n\n"
@@ -113,13 +89,13 @@ def start_cmd(message):
 # === ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ ===
 @bot.message_handler(func=lambda m: m.text == "👤 Мой профиль")
 def profile_handler(message):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('SELECT sub_expires FROM users WHERE user_id = ?', (message.from_user.id,))
-    row = cursor.fetchone()
-    conn.close()
+    user_ref = db.collection('users').document(str(message.from_user.id))
+    doc = user_ref.get()
     
-    sub = row[0] if row else "Не активна"
+    sub = "Не активна"
+    if doc.exists:
+        sub = doc.to_dict().get('sub_expires', 'Не активна')
+        
     text = (
         f"🆔 **Твой ID:** `{message.from_user.id}`\n"
         f"👤 **Юзернейм:** @{message.from_user.username or 'отсутствует'}\n"
@@ -185,23 +161,20 @@ def verify_payment_callback(call):
         days = tariff["days"]
         sub_text = f"Активна ({tariff['name']})" if days < 36500 else "Активна (Навсегда)"
         
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
+        # Сохраняем пользователя в Firebase
+        db.collection('users').document(str(user_id)).set({
+            'user_id': user_id,
+            'username': username,
+            'sub_expires': sub_text
+        }, merge=True)
         
-        cursor.execute(
-            'INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)', 
-            (user_id, username)
-        )
-        cursor.execute(
-            'INSERT INTO keys (key_code, duration_days, is_used, used_by) VALUES (?, ?, 1, ?)', 
-            (new_key, days, user_id)
-        )
-        cursor.execute(
-            'UPDATE users SET sub_expires = ? WHERE user_id = ?', 
-            (sub_text, user_id)
-        )
-        conn.commit()
-        conn.close()
+        # Сохраняем сгенерированный ключ в Firebase
+        db.collection('keys').document(new_key).set({
+            'key_code': new_key,
+            'duration_days': days,
+            'is_used': True,
+            'used_by': user_id
+        })
         
         bot.answer_callback_query(call.id, "Оплата подтверждена!", show_alert=True)
         bot.edit_message_text(
@@ -236,31 +209,37 @@ def process_key_activation(message):
         bot.send_message(message.chat.id, "❌ **Неверный формат!** Ключ должен начинаться с `UNIVERSE-`.", parse_mode="Markdown")
         return
 
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    key_ref = db.collection('keys').document(user_key)
+    doc = key_ref.get()
     
-    cursor.execute('SELECT id, is_used, duration_days FROM keys WHERE key_code = ?', (user_key,))
-    key_data = cursor.fetchone()
-    
-    if not key_data:
+    if not doc.exists:
         bot.send_message(message.chat.id, "❌ **Ключ не найден в базе!**", parse_mode="Markdown")
-    elif key_data[1] == 1:
-        bot.send_message(message.chat.id, "⚠️ **Этот ключ уже активирован!**", parse_mode="Markdown")
     else:
-        duration = key_data[2]
-        sub_desc = f"Активна ({duration} дней)" if duration < 36500 else "Активна (Навсегда)"
-        
-        cursor.execute('UPDATE keys SET is_used = 1, used_by = ? WHERE id = ?', (message.from_user.id, key_data[0]))
-        cursor.execute('UPDATE users SET sub_expires = ? WHERE user_id = ?', (sub_desc, message.from_user.id))
-        conn.commit()
-        
-        success_msg = (
-            f"✅ **Ключ {user_key} успешно активирован!**\n\n"
-            f"📥 **Ссылка на скачивание программы:** {PRIVATE_CHANNEL_LINK}"
-        )
-        bot.send_message(message.chat.id, success_msg, parse_mode="Markdown")
-        
-    conn.close()
+        data = doc.to_dict()
+        if data.get('is_used'):
+            bot.send_message(message.chat.id, "⚠️ **Этот ключ уже активирован!**", parse_mode="Markdown")
+        else:
+            duration = data.get('duration_days', 30)
+            sub_desc = f"Активна ({duration} дней)" if duration < 36500 else "Активна (Навсегда)"
+            
+            # Помечаем ключ как использованный в Firebase
+            key_ref.update({
+                'is_used': True,
+                'used_by': message.from_user.id
+            })
+            
+            # Обновляем подписку юзера в Firebase
+            db.collection('users').document(str(message.from_user.id)).set({
+                'user_id': message.from_user.id,
+                'username': message.from_user.username,
+                'sub_expires': sub_desc
+            }, merge=True)
+            
+            success_msg = (
+                f"✅ **Ключ {user_key} успешно активирован!**\n\n"
+                f"📥 **Ссылка на скачивание программы:** {PRIVATE_CHANNEL_LINK}"
+            )
+            bot.send_message(message.chat.id, success_msg, parse_mode="Markdown")
 
 # === АДМИНСКАЯ ГЕНЕРАЦИЯ КЛЮЧЕЙ ===
 @bot.message_handler(func=lambda m: m.text == "🎲 Сгенерировать ключ (Админ)")
@@ -272,15 +251,17 @@ def generate_key_handler(message):
 
     new_key = generate_key_code()
     
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('INSERT INTO keys (key_code, duration_days) VALUES (?, ?)', (new_key, 30))
-    conn.commit()
-    conn.close()
+    # Записываем новый неиспользованный ключ в Firebase Firestore
+    db.collection('keys').document(new_key).set({
+        'key_code': new_key,
+        'duration_days': 30,
+        'is_used': False,
+        'used_by': None
+    })
     
     bot.send_message(
         message.chat.id, 
-        f"🎲 **Сгенерирован новый ключ (30 дней):**\n`{new_key}`\n\n_Сохранен в общую базу данных._", 
+        f"🎲 **Сгенерирован новый ключ (30 дней):**\n`{new_key}`\n\n_Сохранен в облачную базу Firebase._", 
         parse_mode="Markdown"
     )
 
@@ -290,6 +271,5 @@ def help_handler(message):
 
 # === ЗАПУСК БОТА ===
 if __name__ == "__main__":
-    init_db()
-    print("[Система]: Бот запущен.")
+    print("[Система]: Бот запущен с подключением к Firebase.")
     bot.infinity_polling(timeout=10, long_polling_timeout=5)
