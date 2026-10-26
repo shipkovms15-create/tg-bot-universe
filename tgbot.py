@@ -8,8 +8,6 @@ os.environ.pop('https_proxy', None)
 
 import random
 import string
-import threading
-from flask import Flask
 import telebot
 from telebot import types
 
@@ -40,17 +38,6 @@ cred = credentials.Certificate("firebase_key.json")
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
-# === МИНИ-СЕРВЕР ДЛЯ RENDER (только чтобы держать порт) ===
-app = Flask(__name__)
-
-@app.route('/')
-def index():
-    return "Universe AI Bot is active and running!"
-
-def run_web():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port, use_reloader=False)
-
 def generate_key_code():
     part1 = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
     part2 = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
@@ -77,8 +64,8 @@ def main_menu(username):
 # === КОМАНДА /START ===
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
-    user_id = message.from_user.id
     username = message.from_user.username
+    user_id = message.from_user.id
     
     user_ref = db.collection('users').document(str(user_id))
     doc = user_ref.get()
@@ -254,6 +241,7 @@ def generate_key_handler(message):
         return
 
     new_key = generate_key_code()
+    
     db.collection('keys').document(new_key).set({
         'key_code': new_key,
         'duration_days': 30,
@@ -271,19 +259,7 @@ def generate_key_handler(message):
 def help_handler(message):
     bot.send_message(message.chat.id, "🛠 **Поддержка Universe AI**\n\nПо всем вопросам обращайтесь в поддержку.", parse_mode="Markdown")
 
-# === ЗАПУСК БОТА ЧЕРЕЗ POLLING + ФОНОВЫЙ FLASK ДЛЯ RENDER ===
+# === ЗАПУСК БОТА ===
 if __name__ == "__main__":
-    # Запускаем веб-сервер в отдельном потоке, чтобы Render видел открытый порт
-    web_thread = threading.Thread(target=run_web)
-    web_thread.daemon = True
-    web_thread.start()
-    print("[Система]: Веб-сервер запущен в фоновом режиме для Render.")
-
-    # Убираем любые старые вебхуки, чтобы polling работал без ошибок 409
-    try:
-        bot.remove_webhook()
-    except Exception:
-        pass
-
-    print("[Система]: Бот запущен через Infinity Polling.")
+    print("[Система]: Бот запущен.")
     bot.infinity_polling(timeout=10, long_polling_timeout=5)
