@@ -8,7 +8,8 @@ os.environ.pop('https_proxy', None)
 
 import random
 import string
-from flask import Flask, request
+import threading
+from flask import Flask
 import telebot
 from telebot import types
 
@@ -39,21 +40,16 @@ cred = credentials.Certificate("firebase_key.json")
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
-# === FLASK СЕРВЕР И ВЕБХУК ===
+# === МИНИ-СЕРВЕР ДЛЯ RENDER (только чтобы держать порт) ===
 app = Flask(__name__)
 
 @app.route('/')
 def index():
     return "Universe AI Bot is active and running!"
 
-@app.route(f'/{TOKEN}', methods=['POST'])
-def webhook():
-    if request.headers.get('content-type', '').startswith('application/json'):
-        json_string = request.get_data().decode('utf-8')
-        update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return '', 200
-    return 'Forbidden', 403
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port, use_reloader=False)
 
 def generate_key_code():
     part1 = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
@@ -275,19 +271,19 @@ def generate_key_handler(message):
 def help_handler(message):
     bot.send_message(message.chat.id, "🛠 **Поддержка Universe AI**\n\nПо всем вопросам обращайтесь в поддержку.", parse_mode="Markdown")
 
-# === ЗАПУСК БОТА И ВЕБХУКА ===
+# === ЗАПУСК БОТА ЧЕРЕЗ POLLING + ФОНОВЫЙ FLASK ДЛЯ RENDER ===
 if __name__ == "__main__":
-    RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")
-    if RENDER_URL:
-        webhook_url = f"{RENDER_URL}/{TOKEN}"
-        try:
-            bot.remove_webhook()
-        except Exception:
-            pass
-        bot.set_webhook(url=webhook_url)
-        print(f"[Система]: Вебхук успешно установлен на {webhook_url}")
-    else:
-        print("[Предупреждение]: RENDER_EXTERNAL_URL не найден.")
+    # Запускаем веб-сервер в отдельном потоке, чтобы Render видел открытый порт
+    web_thread = threading.Thread(target=run_web)
+    web_thread.daemon = True
+    web_thread.start()
+    print("[Система]: Веб-сервер запущен в фоновом режиме для Render.")
 
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    # Убираем любые старые вебхуки, чтобы polling работал без ошибок 409
+    try:
+        bot.remove_webhook()
+    except Exception:
+        pass
+
+    print("[Система]: Бот запущен через Infinity Polling.")
+    bot.infinity_polling(timeout=10, long_polling_timeout=5)
