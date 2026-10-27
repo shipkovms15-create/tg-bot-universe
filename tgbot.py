@@ -15,15 +15,10 @@ os.environ.pop('http_proxy', None)
 os.environ.pop('https_proxy', None)
 
 # === НАСТРОЙКИ ===
-TOKEN = "8503313877:AAEonBkSLpmTLZ4c-aCmpOAWKnCLNZRSbgg"  # Токен твоего бота от BotFather
-
-# Твой юзернейм в Telegram (без @), чтобы получить права администратора
+TOKEN = "8503313877:AAEonBkSLpmTLZ4c-aCmpOAWKnCLNZRSbgg"  
 ADMIN_USERNAMES = ["molodoypacanzatazit"]
-
-# Ссылка на твой закрытый канал с программой
 PRIVATE_CHANNEL_LINK = "https://t.me/+L6ELmXSLFw9lNjMy"
 
-# === ТАРИФЫ И ЦЕНЫ ===
 TARIFFS = {
     "30": {"days": 30, "price": 150, "name": "30 дней"},
     "90": {"days": 90, "price": 250, "name": "90 дней"},
@@ -31,11 +26,12 @@ TARIFFS = {
     "lifetime": {"days": 36500, "price": 700, "name": "Навсегда"}
 }
 
-bot = telebot.TeleBot(TOKEN)
+bot = telebot.TeleBot(TOKEN, threaded=False)
 
 # === ИНИЦИАЛИЗАЦИЯ FIREBASE ===
-cred = credentials.Certificate("firebase_key.json")
-firebase_admin.initialize_app(cred)
+if not firebase_admin._apps:
+    cred = credentials.Certificate("firebase_key.json")
+    firebase_admin.initialize_app(cred)
 db = firestore.client()
 
 # === FLASK СЕРВЕР ДЛЯ RENDER WEB SERVICE ===
@@ -43,7 +39,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def index():
-    return "Universe AI Bot is active and running!"
+    return "Universe AI Bot is active and running!", 200
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def webhook():
@@ -77,7 +73,6 @@ def main_menu(username):
     markup.add(btn_help)
     return markup
 
-# === КОМАНДА /START ===
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
     username = message.from_user.username
@@ -101,7 +96,6 @@ def start_cmd(message):
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=main_menu(username))
 
-# === ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ ===
 @bot.message_handler(func=lambda m: m.text == "👤 Мой профиль")
 def profile_handler(message):
     user_ref = db.collection('users').document(str(message.from_user.id))
@@ -118,7 +112,6 @@ def profile_handler(message):
     )
     bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
-# === ПОКУПКА ПОДПИСКИ ===
 @bot.message_handler(func=lambda m: m.text == "💳 Купить подписку")
 def buy_handler(message):
     markup = types.InlineKeyboardMarkup(row_width=1)
@@ -139,12 +132,9 @@ def buy_handler(message):
 def tariff_selected(call):
     tariff_key = call.data.replace("select_tariff_", "")
     tariff = TARIFFS.get(tariff_key)
-    
-    if not tariff:
-        return
+    if not tariff: return
 
     pay_url = "https://rolley.pay/invoice/example_link" 
-    
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("🔗 Оплатить счет", url=pay_url))
     markup.add(types.InlineKeyboardButton("🔄 Проверить оплату", callback_data=f"check_pay_{tariff_key}"))
@@ -155,8 +145,8 @@ def tariff_selected(call):
         text=(
             f"🛒 **Выбран тариф:** {tariff['name']}\n"
             f"💰 **К оплате:** `{tariff['price']} руб.`\n\n"
-            f"1. Нажми кнопку **«Оплатить счет»** и соверши перевод.\n"
-            f"2. После оплаты нажми **«Проверить оплату»** для автоматического получения ключа."
+            f"1. Нажми кнопку **«Оплатить счет»**.\n"
+            f"2. После оплаты нажми **«Проверить оплату»**."
         ),
         parse_mode="Markdown",
         reply_markup=markup
@@ -169,64 +159,46 @@ def verify_payment_callback(call):
     user_id = call.from_user.id
     username = call.from_user.username
     
-    is_paid = True  # Заглушка успешной оплаты
-    
-    if is_paid and tariff:
+    if tariff:
         new_key = generate_key_code()
         days = tariff["days"]
         sub_text = f"Активна ({tariff['name']})" if days < 36500 else "Активна (Навсегда)"
         
         db.collection('users').document(str(user_id)).set({
-            'user_id': user_id,
-            'username': username,
-            'sub_expires': sub_text
+            'user_id': user_id, 'username': username, 'sub_expires': sub_text
         }, merge=True)
         
         db.collection('keys').document(new_key).set({
-            'key_code': new_key,
-            'duration_days': days,
-            'is_used': True,
-            'used_by': user_id
+            'key_code': new_key, 'duration_days': days, 'is_used': True, 'used_by': user_id
         })
         
         bot.answer_callback_query(call.id, "Оплата подтверждена!", show_alert=True)
         bot.edit_message_text(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
+            chat_id=call.message.chat.id, message_id=call.message.message_id,
             text=(
                 f"🎉 **Оплата успешно подтверждена!**\n\n"
                 f"📦 **Тариф:** {tariff['name']}\n"
-                f"🔑 **Твой персональный ключ:** `{new_key}`\n"
-                f"✅ Подписка активирована в профиле!\n\n"
-                f"📥 **Ссылка на скачивание программы:** {PRIVATE_CHANNEL_LINK}"
-            ),
-            parse_mode="Markdown"
+                f"🔑 **Твой ключ:** `{new_key}`\n\n"
+                f"📥 **Скачать:** {PRIVATE_CHANNEL_LINK}"
+            ), parse_mode="Markdown"
         )
-    else:
-        bot.answer_callback_query(call.id, "Оплата еще не поступила. Попробуй позже.", show_alert=True)
 
-# === АКТИВАЦИЯ КЛЮЧА В БОТЕ ===
 @bot.message_handler(func=lambda m: m.text == "🔑 Активировать ключ")
 def key_prompt_handler(message):
-    msg = bot.send_message(
-        message.chat.id, 
-        "🔑 **Введи твой ключ активации (начинается с UNIVERSE-):**", 
-        parse_mode="Markdown"
-    )
+    msg = bot.send_message(message.chat.id, "🔑 **Введи ключ активации (UNIVERSE-...):**", parse_mode="Markdown")
     bot.register_next_step_handler(msg, process_key_activation)
 
 def process_key_activation(message):
     user_key = message.text.strip().upper()
-    
     if not user_key.startswith("UNIVERSE-"):
-        bot.send_message(message.chat.id, "❌ **Неверный формат!** Ключ должен начинаться с `UNIVERSE-`.", parse_mode="Markdown")
+        bot.send_message(message.chat.id, "❌ **Неверный формат!**", parse_mode="Markdown")
         return
 
     key_ref = db.collection('keys').document(user_key)
     doc = key_ref.get()
     
     if not doc.exists:
-        bot.send_message(message.chat.id, "❌ **Ключ не найден в базе!**", parse_mode="Markdown")
+        bot.send_message(message.chat.id, "❌ **Ключ не найден!**", parse_mode="Markdown")
     else:
         data = doc.to_dict()
         if data.get('is_used'):
@@ -237,52 +209,34 @@ def process_key_activation(message):
             
             key_ref.update({'is_used': True, 'used_by': message.from_user.id})
             db.collection('users').document(str(message.from_user.id)).set({
-                'user_id': message.from_user.id,
-                'username': message.from_user.username,
-                'sub_expires': sub_desc
+                'user_id': message.from_user.id, 'username': message.from_user.username, 'sub_expires': sub_desc
             }, merge=True)
             
-            success_msg = (
-                f"✅ **Ключ {user_key} успешно активирован!**\n\n"
-                f"📥 **Ссылка на скачивание программы:** {PRIVATE_CHANNEL_LINK}"
-            )
-            bot.send_message(message.chat.id, success_msg, parse_mode="Markdown")
+            bot.send_message(message.chat.id, f"✅ **Ключ активирован!**\n\n📥 **Ссылка:** {PRIVATE_CHANNEL_LINK}", parse_mode="Markdown")
 
-# === АДМИНСКАЯ ГЕНЕРАЦИЯ КЛЮЧЕЙ ===
 @bot.message_handler(func=lambda m: m.text == "🎲 Сгенерировать ключ (Админ)")
 def generate_key_handler(message):
     username = message.from_user.username
     if not username or username.lower() not in [admin.lower() for admin in ADMIN_USERNAMES]:
-        bot.send_message(message.chat.id, "❌ У тебя нет прав для выполнения этой команды.", parse_mode="Markdown")
         return
 
     new_key = generate_key_code()
-    
     db.collection('keys').document(new_key).set({
-        'key_code': new_key,
-        'duration_days': 30,
-        'is_used': False,
-        'used_by': None
+        'key_code': new_key, 'duration_days': 30, 'is_users': False, 'used_by': None
     })
-    
-    bot.send_message(
-        message.chat.id, 
-        f"🎲 **Сгенерирован новый ключ (30 дней):**\n`{new_key}`\n\n_Сохранен в облачную базу Firebase._", 
-        parse_mode="Markdown"
-    )
+    bot.send_message(message.chat.id, f"🎲 **Новый ключ:**\n`{new_key}`", parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text == "ℹ️ Помощь")
 def help_handler(message):
-    bot.send_message(message.chat.id, "🛠 **Поддержка Universe AI**\n\nПо всем вопросам обращайтесь в поддержку.", parse_mode="Markdown")
+    bot.send_message(message.chat.id, "🛠 **Поддержка Universe AI**\n\nПо всем вопросам пишите админу.", parse_mode="Markdown")
 
-# === ЗАПУСК ДЛЯ WEB SERVICE НА RENDER ===
 if __name__ == "__main__":
     RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")
     if RENDER_URL:
         webhook_url = f"{RENDER_URL}/{TOKEN}"
         try:
             bot.remove_webhook()
-        except Exception:
+        except:
             pass
         bot.set_webhook(url=webhook_url)
         print(f"[Система]: Вебхук установлен на {webhook_url}")
