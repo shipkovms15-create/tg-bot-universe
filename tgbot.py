@@ -1,79 +1,142 @@
 import os
+import json
+import time
 import random
 import string
-import logging
-from flask import Flask, request
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import telebot
 from telebot import types
 
-import firebase_admin
-from firebase_admin import credentials, firestore
-
-# Включаем логирование, чтобы всё было видно в консоли Render
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Сбрасываем системные переменные прокси
+# Сброс системных прокси
 os.environ.pop('HTTP_PROXY', None)
 os.environ.pop('HTTPS_PROXY', None)
 os.environ.pop('http_proxy', None)
 os.environ.pop('https_proxy', None)
 
-# === НАСТРОЙКИ ===
-TOKEN = "8503313877:AAEonBkSLpmTLZ4c-aCmpOAWKnCLNZRSbgg"  # Токен твоего бота от BotFather
+# === 1. ВСТРОЕННЫЙ МИКРО ВЕБ-СЕРВЕР ДЛЯ БЕСПЛАТНОГО RENDER WEB SERVICE ===
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain; charset=utf-8')
+        self.end_headers()
+        self.wfile.write("UniverseAI Telegram Bot is ONLINE 24/7 via Firebase!".encode('utf-8'))
 
-# Твой юзернейм в Telegram (без @), чтобы получить права администратора
-ADMIN_USERNAMES = ["molodoypacanzatazit"]
+    def log_message(self, format, *args):
+        # Отключаем лишний мусор в консоли от пингов
+        return
 
-# Ссылка на твой закрытый канал с программой
-PRIVATE_CHANNEL_LINK = "https://t.me/+L6ELmXSLFw9lNjMy"
+def start_health_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    print(f"[Web-Server]: HTTP-сервер здоровья запущен на порту {port} для Render.")
+    server.serve_forever()
 
-# === ТАРИФЫ И ЦЕНЫ ===
+# Запускаем HTTP-сервер в фоне
+threading.Thread(target=start_health_server, daemon=True).start()
+
+
+# === 2. НАСТРОЙКИ И ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ===
+TOKEN = os.environ.get("BOT_TOKEN", "")
+FIREBASE_DB_URL = os.environ.get("FIREBASE_DB_URL", "https://universeai-mark85-default-rtdb.firebaseio.com/")
+ADMIN_USERNAMES = [u.strip().lower() for u in os.environ.get("ADMIN_USERNAMES", "molodoypacanzatazit").split(",")]
+PRIVATE_CHANNEL_LINK = os.environ.get("PRIVATE_CHANNEL_LINK", "https://t.me/+L6ELmXSLFw9lNjMy")
+
 TARIFFS = {
     "30": {"days": 30, "price": 150, "name": "30 дней"},
     "90": {"days": 90, "price": 250, "name": "90 дней"},
     "365": {"days": 365, "price": 500, "name": "365 дней"},
-    "lifetime": {"days": 36500, "price": 700, "name": "Навсегда"}
+    "lifetime": {"days": 36500, "price": 700, "name": "Навсегда (Lifetime)"}
 }
+
+# === 3. ИНИЦИАЛИЗАЦИЯ FIREBASE ===
+try:
+    import firebase_admin
+    from firebase_admin import credentials, db
+except ImportError:
+    raise ImportError("Установите firebase-admin: pip install firebase-admin")
+
+def init_firebase():
+    if firebase_admin._apps:
+        return
+
+    # 1. Проверяем переменную окружения (для хостинга Render)
+    env_creds_json = os.environ.get("FIREBASE_CREDENTIALS_JSON")
+    if env_creds_json:
+        try:
+            cred_dict = json.loads(env_creds_json)
+            cred = credentials.Certificate(cred_dict)
+            firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DB_URL})
+            print("[Firebase]: Авторизовано через переменную FIREBASE_CREDENTIALS_JSON.")
+            return
+        except Exception as e:
+            print(f"[Firebase Error]: Ошибка чтения FIREBASE_CREDENTIALS_JSON: {e}")
+
+    # 2. Поиск локального файла ключа
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(base_dir, "firebase_service_account.json"),
+        os.path.join(base_dir, "firebase_key.json"),
+        "firebase_service_account.json",
+        "firebase_key.json"
+    ]
+    key_path = next((p for p in candidates if os.path.exists(p)), None)
+
+    if not key_path:
+        raise FileNotFoundError("Ключ Firebase не найден! Задайте FIREBASE_CREDENTIALS_JSON или положите json-файл.")
+
+    cred = credentials.Certificate(key_path)
+    firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DB_URL})
+    print(f"[Firebase]: Подключено через файл: {key_path}")
+
+init_firebase()
 
 bot = telebot.TeleBot(TOKEN)
 
-# === ИНИЦИАЛИЗАЦИЯ FIREBASE ===
-try:
-    if os.path.exists("firebase_key.json"):
-        logger.info("[Firebase]: Файл firebase_key.json найден.")
-    else:
-        logger.error("[Firebase]: ФАЙЛ firebase_key.json НЕ НАЙДЕН В КОРНЕ!")
 
-    cred = credentials.Certificate("firebase_key.json")
-    firebase_admin.initialize_app(cred)
-    db = firestore.client()
-    logger.info("[Firebase]: Успешно подключено к Firestore!")
-except Exception as e:
-    logger.error(f"[Firebase ERROR]: {e}")
-
-# === FLASK СЕРВЕР ДЛЯ RENDER WEB SERVICE ===
-app = Flask(__name__)
-
-@app.route('/')
-def index():
-    return "Universe AI Bot is active and running!"
-
-@app.route(f'/{TOKEN}', methods=['POST'])
-def webhook():
-    if request.headers.get('content-type', '').startswith('application/json'):
-        json_string = request.get_data().decode('utf-8')
-        update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return '', 200
-    return 'Forbidden', 403
-
+# === 4. РАБОТА С БАЗОЙ ДАННЫХ FIREBASE ===
 def generate_key_code():
     part1 = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
     part2 = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
     return f"UNIVERSE-{part1}-{part2}"
 
-# === КЛАВИАТУРА ГЛАВНОГО МЕНЮ ===
+def create_license_in_firebase(key_code: str, duration_days: int, tariff_name: str, created_by: str) -> dict:
+    key_clean = key_code.strip().upper()
+    data = {
+        "key_code": key_clean,
+        "duration_days": duration_days,
+        "tariff_name": tariff_name,
+        "is_used": 0,  # Ключ свободен для ввода в программу UniverseAI на ПК
+        "created_by": str(created_by),
+        "created_at": int(time.time()),
+        "activated_at": None
+    }
+    db.reference(f"licenses/{key_clean}").set(data)
+    return data
+
+def get_user_from_firebase(user_id: int):
+    return db.reference(f"users/{user_id}").get()
+
+def save_or_update_user(user_id: int, username: str, sub_expires: str = None, active_key: str = None):
+    ref = db.reference(f"users/{user_id}")
+    user_data = ref.get() or {}
+    user_data["user_id"] = user_id
+    user_data["username"] = username or user_data.get("username", "Unknown")
+    user_data["last_seen"] = int(time.time())
+    
+    if sub_expires:
+        user_data["sub_expires"] = sub_expires
+    elif "sub_expires" not in user_data:
+        user_data["sub_expires"] = "Не активна"
+        
+    if active_key:
+        user_data["active_key"] = active_key
+        
+    ref.set(user_data)
+    return user_data
+
+
+# === 5. МЕНЮ И КНОПКИ ===
 def main_menu(username):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     btn_profile = types.KeyboardButton("👤 Мой профиль")
@@ -84,62 +147,43 @@ def main_menu(username):
     markup.add(btn_profile, btn_key)
     markup.add(btn_buy)
     
-    if username and username.lower() in [admin.lower() for admin in ADMIN_USERNAMES]:
+    if username and username.lower() in ADMIN_USERNAMES:
         btn_gen = types.KeyboardButton("🎲 Сгенерировать ключ (Админ)")
         markup.add(btn_gen)
         
     markup.add(btn_help)
     return markup
 
-# === КОМАНДА /START ===
+
+# === 6. ОБРАБОТЧИКИ СООБЩЕНИЙ ===
+
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
-    try:
-        username = message.from_user.username
-        user_id = message.from_user.id
-        
-        user_ref = db.collection('users').document(str(user_id))
-        doc = user_ref.get()
-        
-        if not doc.exists:
-            user_ref.set({
-                'user_id': user_id,
-                'username': username,
-                'sub_expires': 'Не активна'
-            })
-        else:
-            user_ref.update({'username': username})
-        
-        welcome_text = (
-            f"👋 Привет, **{message.from_user.first_name}**!\n\n"
-            f"Добро пожаловать в официальный бот управления **Universe AI**."
-        )
-        bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=main_menu(username))
-        logger.info(f"Обработана команда /start от пользователя {user_id}")
-    except Exception as e:
-        logger.error(f"Ошибка в /start: {e}")
+    username = message.from_user.username
+    save_or_update_user(message.from_user.id, username)
+    welcome_text = (
+        f"👋 Привет, **{message.from_user.first_name}**!\n\n"
+        f"Добро пожаловать в бота управления **Universe AI**.\n"
+        f"Здесь вы можете приобрести и активировать ключ для настольной программы."
+    )
+    bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=main_menu(username))
 
-# === ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ ===
+
 @bot.message_handler(func=lambda m: m.text == "👤 Мой профиль")
 def profile_handler(message):
-    try:
-        user_ref = db.collection('users').document(str(message.from_user.id))
-        doc = user_ref.get()
-        
-        sub = "Не активна"
-        if doc.exists:
-            sub = doc.to_dict().get('sub_expires', 'Не активна')
-            
-        text = (
-            f"🆔 **Твой ID:** `{message.from_user.id}`\n"
-            f"👤 **Юзернейм:** @{message.from_user.username or 'отсутствует'}\n"
-            f"💎 **Статус подписки:** `{sub}`"
-        )
-        bot.send_message(message.chat.id, text, parse_mode="Markdown")
-    except Exception as e:
-        logger.error(f"Ошибка в профиле: {e}")
+    user_data = get_user_from_firebase(message.from_user.id)
+    sub = user_data.get("sub_expires", "Не активна") if user_data else "Не активна"
+    active_key = user_data.get("active_key", "Отсутствует") if user_data else "Отсутствует"
+    
+    text = (
+        f"🆔 **Твой ID:** `{message.from_user.id}`\n"
+        f"👤 **Юзернейм:** @{message.from_user.username or 'отсутствует'}\n"
+        f"💎 **Статус подписки:** `{sub}`\n"
+        f"🔑 **Последний ключ:** `{active_key}`"
+    )
+    bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
-# === ПОКУПКА ПОДПИСКИ ===
+
 @bot.message_handler(func=lambda m: m.text == "💳 Купить подписку")
 def buy_handler(message):
     markup = types.InlineKeyboardMarkup(row_width=1)
@@ -148,7 +192,6 @@ def buy_handler(message):
             f"📦 {tariff['name']} — {tariff['price']} руб.", 
             callback_data=f"select_tariff_{key}"
         ))
-    
     bot.send_message(
         message.chat.id,
         "💳 **Выбери подходящий тариф подписки:**",
@@ -156,16 +199,15 @@ def buy_handler(message):
         reply_markup=markup
     )
 
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith("select_tariff_"))
 def tariff_selected(call):
     tariff_key = call.data.replace("select_tariff_", "")
     tariff = TARIFFS.get(tariff_key)
-    
     if not tariff:
         return
 
-    pay_url = "https://rolley.pay/invoice/example_link" 
-    
+    pay_url = "https://t.me/molodoypacanzatazit"
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("🔗 Оплатить счет", url=pay_url))
     markup.add(types.InlineKeyboardButton("🔄 Проверить оплату", callback_data=f"check_pay_{tariff_key}"))
@@ -176,12 +218,13 @@ def tariff_selected(call):
         text=(
             f"🛒 **Выбран тариф:** {tariff['name']}\n"
             f"💰 **К оплате:** `{tariff['price']} руб.`\n\n"
-            f"1. Нажми кнопку **«Оплатить счет»** и соверши перевод.\n"
-            f"2. После оплаты нажми **«Проверить оплату»** для автоматического получения ключа."
+            f"1. Нажмите **«Оплатить счет»**.\n"
+            f"2. После перевода нажмите **«Проверить оплату»** для получения ключа."
         ),
         parse_mode="Markdown",
         reply_markup=markup
     )
+
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("check_pay_"))
 def verify_payment_callback(call):
@@ -190,128 +233,94 @@ def verify_payment_callback(call):
     user_id = call.from_user.id
     username = call.from_user.username
     
-    is_paid = True  # Заглушка успешной оплаты
+    is_paid = True  # Имитация успешной оплаты
     
     if is_paid and tariff:
         new_key = generate_key_code()
         days = tariff["days"]
         sub_text = f"Активна ({tariff['name']})" if days < 36500 else "Активна (Навсегда)"
         
-        db.collection('users').document(str(user_id)).set({
-            'user_id': user_id,
-            'username': username,
-            'sub_expires': sub_text
-        }, merge=True)
-        
-        db.collection('keys').document(new_key).set({
-            'key_code': new_key,
-            'duration_days': days,
-            'is_used': True,
-            'used_by': user_id
-        })
+        create_license_in_firebase(new_key, days, tariff['name'], str(user_id))
+        save_or_update_user(user_id, username, sub_expires=sub_text, active_key=new_key)
         
         bot.answer_callback_query(call.id, "Оплата подтверждена!", show_alert=True)
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
             text=(
-                f"🎉 **Оплата успешно подтверждена!**\n\n"
+                f"🎉 **Оплата подтверждена!**\n\n"
                 f"📦 **Тариф:** {tariff['name']}\n"
-                f"🔑 **Твой персональный ключ:** `{new_key}`\n"
-                f"✅ Подписка активирована в профиле!\n\n"
-                f"📥 **Ссылка на скачивание программы:** {PRIVATE_CHANNEL_LINK}"
+                f"🔑 **Твой ключ для ПК:**\n`{new_key}`\n\n"
+                f"Вставьте этот ключ в окно программы UniverseAI на компьютере.\n"
+                f"📥 **Скачать программу:** {PRIVATE_CHANNEL_LINK}"
             ),
             parse_mode="Markdown"
         )
-    else:
-        bot.answer_callback_query(call.id, "Оплата еще не поступила. Попробуй позже.", show_alert=True)
 
-# === АКТИВАЦИЯ КЛЮЧА В БОТЕ ===
+
 @bot.message_handler(func=lambda m: m.text == "🔑 Активировать ключ")
 def key_prompt_handler(message):
-    msg = bot.send_message(
-        message.chat.id, 
-        "🔑 **Введи твой ключ активации (начинается с UNIVERSE-):**", 
-        parse_mode="Markdown"
-    )
+    msg = bot.send_message(message.chat.id, "🔑 **Введи лицензионный ключ (UNIVERSE-XXXX-XXXX):**", parse_mode="Markdown")
     bot.register_next_step_handler(msg, process_key_activation)
 
 def process_key_activation(message):
+    user_key = message.text.strip().upper()
+    if not user_key.startswith("UNIVERSE-"):
+        bot.send_message(message.chat.id, "❌ **Неверный формат ключа!**", parse_mode="Markdown")
+        return
+
     try:
-        user_key = message.text.strip().upper()
-        
-        if not user_key.startswith("UNIVERSE-"):
-            bot.send_message(message.chat.id, "❌ **Неверный формат!** Ключ должен начинаться с `UNIVERSE-`.", parse_mode="Markdown")
+        ref = db.reference(f"licenses/{user_key}")
+        key_data = ref.get()
+        if not key_data:
+            bot.send_message(message.chat.id, "❌ **Ключ не найден в базе Firebase!**", parse_mode="Markdown")
             return
-
-        key_ref = db.collection('keys').document(user_key)
-        doc = key_ref.get()
+            
+        if key_data.get("is_used", 0) == 1:
+            bot.send_message(message.chat.id, "⚠️ **Этот ключ уже активирован в программе на ПК!**", parse_mode="Markdown")
+            return
+            
+        tariff_name = key_data.get("tariff_name", "Подписка")
+        save_or_update_user(message.from_user.id, message.from_user.username, sub_expires=f"Активна ({tariff_name})", active_key=user_key)
         
-        if not doc.exists:
-            bot.send_message(message.chat.id, "❌ **Ключ не найден в базе!**", parse_mode="Markdown")
-        else:
-            data = doc.to_dict()
-            if data.get('is_used'):
-                bot.send_message(message.chat.id, "⚠️ **Этот ключ уже активирован!**", parse_mode="Markdown")
-            else:
-                duration = data.get('duration_days', 30)
-                sub_desc = f"Активна ({duration} дней)" if duration < 36500 else "Активна (Навсегда)"
-                
-                key_ref.update({'is_used': True, 'used_by': message.from_user.id})
-                db.collection('users').document(str(message.from_user.id)).set({
-                    'user_id': message.from_user.id,
-                    'username': message.from_user.username,
-                    'sub_expires': sub_desc
-                }, merge=True)
-                
-                success_msg = (
-                    f"✅ **Ключ {user_key} успешно активирован!**\n\n"
-                    f"📥 **Ссылка на скачивание программы:** {PRIVATE_CHANNEL_LINK}"
-                )
-                bot.send_message(message.chat.id, success_msg, parse_mode="Markdown")
+        bot.send_message(
+            message.chat.id,
+            f"✅ **Ключ `{user_key}` подтвержден!**\n\n"
+            f"Скопируйте его и вставьте в окно программы **UniverseAI** на ПК.\n"
+            f"📥 **Скачать программу:** {PRIVATE_CHANNEL_LINK}",
+            parse_mode="Markdown"
+        )
     except Exception as e:
-        logger.error(f"Ошибка при активации ключа: {e}")
+        bot.send_message(message.chat.id, f"❌ Ошибка Firebase: {e}", parse_mode="Markdown")
 
-# === АДМИНСКАЯ ГЕНЕРАЦИЯ КЛЮЧЕЙ ===
+
 @bot.message_handler(func=lambda m: m.text == "🎲 Сгенерировать ключ (Админ)")
 def generate_key_handler(message):
     username = message.from_user.username
-    if not username or username.lower() not in [admin.lower() for admin in ADMIN_USERNAMES]:
-        bot.send_message(message.chat.id, "❌ У тебя нет прав для выполнения этой команды.", parse_mode="Markdown")
+    if not username or username.lower() not in ADMIN_USERNAMES:
+        bot.send_message(message.chat.id, "❌ У вас нет прав администратора.", parse_mode="Markdown")
         return
 
     new_key = generate_key_code()
-    
-    db.collection('keys').document(new_key).set({
-        'key_code': new_key,
-        'duration_days': 30,
-        'is_used': False,
-        'used_by': None
-    })
-    
+    create_license_in_firebase(new_key, 30, "30 дней (Админ)", f"admin_{username}")
     bot.send_message(
-        message.chat.id, 
-        f"🎲 **Сгенерирован новый ключ (30 дней):**\n`{new_key}`\n\n_Сохранен в облачную базу Firebase._", 
+        message.chat.id,
+        f"🎲 **Новый ключ (30 дней):**\n`{new_key}`\n\n✅ _Записан в Firebase, готов к вводу на ПК._",
         parse_mode="Markdown"
     )
 
+
 @bot.message_handler(func=lambda m: m.text == "ℹ️ Помощь")
 def help_handler(message):
-    bot.send_message(message.chat.id, "🛠 **Поддержка Universe AI**\n\nПо всем вопросам обращайтесь в поддержку.", parse_mode="Markdown")
+    bot.send_message(message.chat.id, "🛠 **Поддержка Universe AI:** @molodoypacanzatazit", parse_mode="Markdown")
 
-# === ЗАПУСК ДЛЯ WEB SERVICE НА RENDER ===
+
+# === 7. ГЛАВНЫЙ ЦИКЛ 24/7 ===
 if __name__ == "__main__":
-    RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")
-    if RENDER_URL:
-        webhook_url = f"{RENDER_URL}/{TOKEN}"
+    print("[Бот]: Запущен и слушает Telegram...")
+    while True:
         try:
-            bot.remove_webhook()
-        except Exception:
-            pass
-        bot.set_webhook(url=webhook_url)
-        logger.info(f"Вебхук успешно установлен на: {webhook_url}")
-    else:
-        logger.warning("RENDER_EXTERNAL_URL не найден, вебхук не установлен!")
-    
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+            bot.infinity_polling(timeout=20, long_polling_timeout=10, skip_pending=True)
+        except Exception as e:
+            print(f"[Сеть]: {e}. Переподключение через 5 сек...")
+            time.sleep(5)
