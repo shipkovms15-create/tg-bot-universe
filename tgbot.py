@@ -14,7 +14,7 @@ os.environ.pop('HTTPS_PROXY', None)
 os.environ.pop('http_proxy', None)
 os.environ.pop('https_proxy', None)
 
-# === 1. ВСТРОЕННЫЙ ВЕБ-СЕРВЕР ДЛЯ БЕСПЛАТНОГО RENDER WEB SERVICE ===
+# === 1. ВСТРОЕННЫЙ ВЕБ-СЕРВЕР ДЛЯ RENDER ===
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -46,7 +46,7 @@ TARIFFS = {
     "lifetime": {"days": 36500, "price": 700, "name": "Навсегда (Lifetime)"}
 }
 
-# === 3. ИНИЦИАЛИЗАЦИЯ FIREBASE (С ПРОВЕРКОЙ ПАПКИ RENDER /etc/secrets/) ===
+# === 3. ИНИЦИАЛИЗАЦИЯ FIREBASE ===
 try:
     import firebase_admin
     from firebase_admin import credentials, db
@@ -265,7 +265,42 @@ def process_key_activation(message):
             
         tariff_name = key_data.get("tariff_name", "Подписка")
         save_or_update_user(message.from_user.id, message.from_user.username, sub_expires=f"Активна ({tariff_name})", active_key=user_key)
-        bot.send_message(
-            message.chat.id,
+        
+        success_text = (
             f"✅ **Ключ `{user_key}` подтвержден!**\n\n"
-            f"Скопируйте его и вставьт
+            f"Скопируйте его и вставьте в окно программы **UniverseAI** на ПК.\n\n"
+            f"📥 **Скачать программу:** {PRIVATE_CHANNEL_LINK}"
+        )
+        bot.send_message(message.chat.id, success_text, parse_mode="Markdown")
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Ошибка ключ не верный: {e}", parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: m.text == "🎲 Сгенерировать ключ (Админ)")
+def generate_key_handler(message):
+    username = message.from_user.username
+    if not username or username.lower() not in ADMIN_USERNAMES:
+        bot.send_message(message.chat.id, "❌ У вас нет прав администратора.", parse_mode="Markdown")
+        return
+
+    new_key = generate_key_code()
+    create_license_in_firebase(new_key, 30, "30 дней (Админ)", f"admin_{username}")
+    bot.send_message(
+        message.chat.id,
+        f"🎲 **Новый ключ (30 дней):**\n`{new_key}`\n\n✅ _Записан в Firebase, готов к вводу на ПК._",
+        parse_mode="Markdown"
+    )
+
+@bot.message_handler(func=lambda m: m.text == "ℹ️ Помощь")
+def help_handler(message):
+    bot.send_message(message.chat.id, "🛠 **Поддержка Universe AI:** @molodoypacanzatazit", parse_mode="Markdown")
+
+# === 7. ГЛАВНЫЙ ЦИКЛ 24/7 ===
+if __name__ == "__main__":
+    print("[Бот]: Запущен и слушает Telegram...")
+    while True:
+        try:
+            bot.infinity_polling(timeout=20, long_polling_timeout=10, skip_pending=True)
+        except Exception as e:
+            print(f"[Сеть]: {e}. Переподключение через 5 сек...")
+            time.sleep(5)
