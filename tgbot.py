@@ -74,7 +74,7 @@ def init_firebase():
     else:
         env_creds_json = os.environ.get("FIREBASE_CREDENTIALS_JSON")
         if env_creds_json:
-            print("[Firebase]: Файл не найден, читаем переменную FIREBASE_CREDENTIALS_JSON...")
+            print("[Firebase]: Читаем переменную FIREBASE_CREDENTIALS_JSON...")
             cred_dict = json.loads(env_creds_json)
             if "private_key" in cred_dict:
                 cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
@@ -104,6 +104,8 @@ def create_license_in_firebase(key_code: str, duration_days: int, tariff_name: s
         "is_used": 0,
         "created_by": str(created_by),
         "created_at": int(time.time()),
+        "tg_claimed_by": None,
+        "tg_claimed_username": None,
         "activated_at": None
     }
     db.reference(f"licenses/{key_clean}").set(data)
@@ -225,8 +227,15 @@ def verify_payment_callback(call):
         new_key = generate_key_code()
         days = tariff["days"]
         sub_text = f"Активна ({tariff['name']})" if days < 36500 else "Активна (Навсегда)"
+        
+        # Сразу привязываем купленный ключ к покупателю
         create_license_in_firebase(new_key, days, tariff['name'], str(user_id))
+        db.reference(f"licenses/{new_key}").update({
+            "tg_claimed_by": user_id,
+            "tg_claimed_username": username or "Unknown"
+        })
         save_or_update_user(user_id, username, sub_expires=sub_text, active_key=new_key)
+        
         bot.answer_callback_query(call.id, "Оплата подтверждена!", show_alert=True)
         bot.edit_message_text(
             chat_id=call.message.chat.id,
@@ -248,33 +257,62 @@ def key_prompt_handler(message):
 
 def process_key_activation(message):
     user_key = message.text.strip().upper()
+    user_id = message.from_user.id
+    
     if not user_key.startswith("UNIVERSE-"):
-        bot.send_message(message.chat.id, "❌ **Неверный формат ключа!**", parse_mode="Markdown")
+        bot.send_message(message.chat.id, "❌ **Неверный формат ключа!** Ключ должен начинаться с `UNIVERSE-`.", parse_mode="Markdown")
         return
 
     try:
         ref = db.reference(f"licenses/{user_key}")
         key_data = ref.get()
+        
         if not key_data:
             bot.send_message(message.chat.id, "❌ **Ключ не найден в базе Firebase!**", parse_mode="Markdown")
             return
             
-        if key_data.get("is_used", 0) == 1:
-            bot.send_message(message.chat.id, "⚠️ **Этот ключ уже активирован в программе на ПК!**", parse_mode="Markdown")
+        # 1. Проверяем, не занят ли ключ другим пользователем
+        claimed_by = key_data.get("tg_claimed_by")
+        if claimed_by:
+            if str(claimed_by) == str(user_id):
+                bot.send_message(
+                    message.chat.id, 
+                    f"ℹ️ **Вы уже активировали этот ключ ранее!**\n\nОн привязан к вашему профилю. Скопируйте его и вставьте в программу UniverseAI на ПК.", 
+                    parse_mode="Markdown"
+                )
+            else:
+                bot.send_message(
+                    message.chat.id, 
+                    "❌ **Этот ключ уже активирован другим пользователем Telegram!**\nКаждый ключ индивидуален.", 
+                    parse_mode="Markdown"
+                )
             return
-            
+
+        # 2. Проверяем статус в программе на ПК
+        if key_data.get("is_used", 0) == 1:
+            bot.send_message(message.chat.id, "⚠️ **Этот ключ уже использован в программе на ПК!**", parse_mode="Markdown")
+            return
+
+        # 3. Привязываем ключ к пользователю в облаке
         tariff_name = key_data.get("tariff_name", "Подписка")
-        save_or_update_user(message.from_user.id, message.from_user.username, sub_expires=f"Активна ({tariff_name})", active_key=user_key)
+        ref.update({
+            "tg_claimed_by": user_id,
+            "tg_claimed_username": message.from_user.username or "Unknown",
+            "tg_claimed_at": int(time.time())
+        })
+        
+        save_or_update_user(user_id, message.from_user.username, sub_expires=f"Активна ({tariff_name})", active_key=user_key)
         
         success_text = (
-            f"✅ **Ключ `{user_key}` подтвержден!**\n\n"
-            f"Скопируйте его и вставьте в окно программы **UniverseAI** на ПК.\n\n"
+            f"✅ **Ключ `{user_key}` успешно привязан к вашему профилю!**\n\n"
+            f"📦 **Тариф:** {tariff_name}\n"
+            f"💻 Теперь скопируйте его и вставьте в программу **UniverseAI** на ПК для полной разблокировки.\n\n"
             f"📥 **Скачать программу:** {PRIVATE_CHANNEL_LINK}"
         )
         bot.send_message(message.chat.id, success_text, parse_mode="Markdown")
         
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Ошибка ключ не верный: {e}", parse_mode="Markdown")
+        bot.send_message(message.chat.id, f"❌ Ошибка Firebase: {e}", parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text == "🎲 Сгенерировать ключ (Админ)")
 def generate_key_handler(message):
