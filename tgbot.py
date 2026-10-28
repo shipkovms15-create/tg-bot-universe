@@ -38,7 +38,6 @@ TOKEN = os.environ.get("BOT_TOKEN", "8503313877:AAEonBkSLpmTLZ4c-aCmpOAWKnCLNZRS
 FIREBASE_DB_URL = os.environ.get("FIREBASE_DB_URL", "https://universeai-1e63b-default-rtdb.europe-west1.firebasedatabase.app/")
 ADMIN_USERNAMES = [u.strip().lower() for u in os.environ.get("ADMIN_USERNAMES", "molodoypacanzatazit").split(",")]
 PRIVATE_CHANNEL_LINK = os.environ.get("PRIVATE_CHANNEL_LINK", "https://t.me/+L6ELmXSLFw9lNjMy")
-PUBLIC_CHANNEL_LINK = os.environ.get("PUBLIC_CHANNEL_LINK", "https://t.me/UniverseAIStudio")
 
 TARIFFS = {
     "30": {"days": 30, "price": 150, "name": "30 дней"},
@@ -133,7 +132,6 @@ def save_or_update_user(user_id: int, username: str, sub_expires: str = None, ac
     ref.set(user_data)
     return user_data
 
-# Вспомогательная функция проверки на админа (по юзернейму)
 def is_admin(message):
     username = message.from_user.username
     if username and username.lower() in ADMIN_USERNAMES:
@@ -152,7 +150,6 @@ def main_menu(message):
     markup.add(btn_profile, btn_key)
     markup.add(btn_buy)
     
-    # Проверка админа для показа кнопки генерации
     if is_admin(message):
         btn_gen = types.KeyboardButton("🎲 Сгенерировать ключ (Админ)")
         markup.add(btn_gen)
@@ -181,7 +178,7 @@ def profile_handler(message):
         f"🆔 **Твой ID:** `{message.from_user.id}`\n"
         f"👤 **Юзернейм:** @{message.from_user.username or 'отсутствует'}\n"
         f"💎 **Статус подписки:** `{sub}`\n"
-        f"🔑 **Последний ключ:** `{active_key}`"
+        f"🔑 **Последний ключ:** `||{active_key}||`"
     )
     bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
@@ -258,7 +255,7 @@ def verify_payment_callback(call):
             text=(
                 f"🎉 **Оплата подтверждена!**\n\n"
                 f"📦 **Тариф:** {tariff['name']}\n"
-                f"🔑 **Твой ключ для ПК:**\n`{new_key}`\n\n"
+                f"🔑 **Твой ключ для ПК (нажми, чтобы открыть):**\n||{new_key}||\n\n"
                 f"Вставьте этот ключ в окно программы UniverseAI на компьютере.\n"
                 f"📥 **Скачать программу:** {PRIVATE_CHANNEL_LINK}"
             ),
@@ -316,7 +313,7 @@ def process_key_activation(message):
         save_or_update_user(user_id, message.from_user.username, sub_expires=f"Активна ({tariff_name})", active_key=user_key)
         
         success_text = (
-            f"✅ **Ключ `{user_key}` успешно привязан к вашему профилю!**\n\n"
+            f"✅ **Ключ `||{user_key}||` успешно привязан к вашему профилю!**\n\n"
             f"📦 **Тариф:** {tariff_name}\n"
             f"💻 Теперь скопируйте его и вставьте в программу **UniverseAI** на ПК для полной разблокировки.\n\n"
             f"📥 **Скачать программу:** {PRIVATE_CHANNEL_LINK}"
@@ -336,7 +333,7 @@ def generate_key_handler(message):
     create_license_in_firebase(new_key, 30, "30 дней (Админ)", f"admin_{message.from_user.username or message.from_user.id}")
     bot.send_message(
         message.chat.id,
-        f"🎲 **Новый ключ (30 дней):**\n`{new_key}`\n\n✅ _Записан в Firebase, готов к вводу на ПК._",
+        f"🎲 **Новый ключ (30 дней):**\n||{new_key}||\n\n✅ _Записан в Firebase, готов к вводу на ПК._",
         parse_mode="Markdown"
     )
 
@@ -344,9 +341,9 @@ def generate_key_handler(message):
 def about_handler(message):
     about_text = (
         "🤖 **Universe AI** — ваш персональный интеллектуальный голосовой помощник.\n\n"
-        "📌 **Версия:** 4.0 (Beta)\n"
+        "📌 **Версия:** 4.0 (Stable)\n"
         "⚡️ **Возможности:** умное управление системой, быстрый поиск, интеграция с передовыми языковыми моделями и кастомные голосовые движки.\n\n"
-        f"📥 **Канал программы:** {PUBLIC_CHANNEL_LINK}\n"
+        f"📥 **Скачать дистрибутив:** {PRIVATE_CHANNEL_LINK}\n"
         "🛠 **Разработчик / Поддержка:** @molodoypacanzatazit"
     )
     bot.send_message(message.chat.id, about_text, parse_mode="Markdown")
