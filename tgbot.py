@@ -145,6 +145,7 @@ def main_menu(message):
     btn_profile = types.KeyboardButton("👤 Мой профиль")
     btn_key = types.KeyboardButton("🔑 Активировать ключ")
     btn_buy = types.KeyboardButton("💳 Купить подписку")
+    btn_about = types.KeyboardButton("💻 О программе")
     btn_help = types.KeyboardButton("ℹ️ Помощь")
     
     markup.add(btn_profile, btn_key)
@@ -155,7 +156,7 @@ def main_menu(message):
         btn_gen = types.KeyboardButton("🎲 Сгенерировать ключ (Админ)")
         markup.add(btn_gen)
         
-    markup.add(btn_help)
+    markup.add(btn_about, btn_help)
     return markup
 
 # === 6. ОБРАБОТЧИКИ СООБЩЕНИЙ ===
@@ -337,6 +338,17 @@ def generate_key_handler(message):
         f"🎲 **Новый ключ (30 дней):**\n`{new_key}`\n\n✅ _Записан в Firebase, готов к вводу на ПК._",
         parse_mode="Markdown"
     )
+
+@bot.message_handler(func=lambda m: m.text == "💻 О программе")
+def about_handler(message):
+    about_text = (
+        "🤖 **Universe AI** — ваш персональный интеллектуальный голосовой помощник.\n\n"
+        "📌 **Версия:** 4.0 (Stable)\n"
+        "⚡️ **Возможности:** умное управление системой, быстрый поиск, интеграция с передовыми языковыми моделями и кастомные голосовые движки.\n\n"
+        f"📥 **Скачать дистрибутив:** {PRIVATE_CHANNEL_LINK}\n"
+        "🛠 **Разработчик / Поддержка:** @molodoypacanzatazit"
+    )
+    bot.send_message(message.chat.id, about_text, parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text == "ℹ️ Помощь")
 def help_handler(message):
