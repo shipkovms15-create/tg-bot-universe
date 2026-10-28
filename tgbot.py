@@ -38,6 +38,7 @@ TOKEN = os.environ.get("BOT_TOKEN", "8503313877:AAEonBkSLpmTLZ4c-aCmpOAWKnCLNZRS
 FIREBASE_DB_URL = os.environ.get("FIREBASE_DB_URL", "https://universeai-1e63b-default-rtdb.europe-west1.firebasedatabase.app/")
 ADMIN_USERNAMES = [u.strip().lower() for u in os.environ.get("ADMIN_USERNAMES", "molodoypacanzatazit").split(",")]
 PRIVATE_CHANNEL_LINK = os.environ.get("PRIVATE_CHANNEL_LINK", "https://t.me/+L6ELmXSLFw9lNjMy")
+PUBLIC_CHANNEL_LINK = os.environ.get("PUBLIC_CHANNEL_LINK", "https://t.me/UniverseAIStudio")
 
 TARIFFS = {
     "30": {"days": 30, "price": 150, "name": "30 дней"},
@@ -345,7 +346,7 @@ def about_handler(message):
         "🤖 **Universe AI** — ваш персональный интеллектуальный голосовой помощник.\n\n"
         "📌 **Версия:** 4.0 (Stable)\n"
         "⚡️ **Возможности:** умное управление системой, быстрый поиск, интеграция с передовыми языковыми моделями и кастомные голосовые движки.\n\n"
-        f"📥 **Скачать дистрибутив:** {PRIVATE_CHANNEL_LINK}\n"
+        f"📥 **Скачать дистрибутив:** {PUBLIC_CHANNEL_LINK}\n"
         "🛠 **Разработчик / Поддержка:** @molodoypacanzatazit"
     )
     bot.send_message(message.chat.id, about_text, parse_mode="Markdown")
