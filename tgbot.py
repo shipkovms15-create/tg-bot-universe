@@ -178,7 +178,7 @@ def profile_handler(message):
         f"🆔 **Твой ID:** `{message.from_user.id}`\n"
         f"👤 **Юзернейм:** @{message.from_user.username or 'отсутствует'}\n"
         f"💎 **Статус подписки:** `{sub}`\n"
-        f"🔑 **Последний ключ:** `||{active_key}||`"
+        f"🔑 **Последний ключ:** `{active_key}`"
     )
     bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
