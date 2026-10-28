@@ -132,8 +132,15 @@ def save_or_update_user(user_id: int, username: str, sub_expires: str = None, ac
     ref.set(user_data)
     return user_data
 
+# Вспомогательная функция проверки на админа (по юзернейму)
+def is_admin(message):
+    username = message.from_user.username
+    if username and username.lower() in ADMIN_USERNAMES:
+        return True
+    return False
+
 # === 5. МЕНЮ ===
-def main_menu(username):
+def main_menu(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     btn_profile = types.KeyboardButton("👤 Мой профиль")
     btn_key = types.KeyboardButton("🔑 Активировать ключ")
@@ -143,7 +150,8 @@ def main_menu(username):
     markup.add(btn_profile, btn_key)
     markup.add(btn_buy)
     
-    if username and username.lower() in ADMIN_USERNAMES:
+    # Проверка админа для показа кнопки генерации
+    if is_admin(message):
         btn_gen = types.KeyboardButton("🎲 Сгенерировать ключ (Админ)")
         markup.add(btn_gen)
         
@@ -160,7 +168,7 @@ def start_cmd(message):
         f"Добро пожаловать в бота управления **Universe AI**.\n"
         f"Здесь вы можете приобрести и активировать ключ для настольной программы."
     )
-    bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=main_menu(username))
+    bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=main_menu(message))
 
 @bot.message_handler(func=lambda m: m.text == "👤 Мой профиль")
 def profile_handler(message):
@@ -200,12 +208,10 @@ def tariff_selected(call):
     pay_url = "https://t.me/molodoypacanzatazit"
     markup = types.InlineKeyboardMarkup(row_width=1)
     
-    # Ссылки на документы пользователя
     markup.add(
         types.InlineKeyboardButton("📜 Пользовательское соглашение", url="https://telegra.ph/PUBLICHNAYA-OFERTA-08-12-15"),
         types.InlineKeyboardButton("🔒 Политика конфиденциальности", url="https://telegra.ph/POLITIKA-KONFIDENCIALNOSTI-08-12-99")
     )
-    # Кнопки оплаты
     markup.add(types.InlineKeyboardButton("🔗 Оплатить счет", url=pay_url))
     markup.add(types.InlineKeyboardButton("🔄 Проверить оплату", callback_data=f"check_pay_{tariff_key}"))
     
@@ -236,7 +242,6 @@ def verify_payment_callback(call):
         days = tariff["days"]
         sub_text = f"Активна ({tariff['name']})" if days < 36500 else "Активна (Навсегда)"
         
-        # Сразу привязываем купленный ключ к покупателю
         create_license_in_firebase(new_key, days, tariff['name'], str(user_id))
         db.reference(f"licenses/{new_key}").update({
             "tg_claimed_by": user_id,
@@ -279,7 +284,6 @@ def process_key_activation(message):
             bot.send_message(message.chat.id, "❌ **Ключ не найден в базе Firebase!**", parse_mode="Markdown")
             return
             
-        # 1. Проверяем, не занят ли ключ другим пользователем
         claimed_by = key_data.get("tg_claimed_by")
         if claimed_by:
             if str(claimed_by) == str(user_id):
@@ -296,12 +300,10 @@ def process_key_activation(message):
                 )
             return
 
-        # 2. Проверяем статус в программе на ПК
         if key_data.get("is_used", 0) == 1:
             bot.send_message(message.chat.id, "⚠️ **Этот ключ уже использован в программе на ПК!**", parse_mode="Markdown")
             return
 
-        # 3. Привязываем ключ к пользователю в облаке
         tariff_name = key_data.get("tariff_name", "Подписка")
         ref.update({
             "tg_claimed_by": user_id,
@@ -324,13 +326,12 @@ def process_key_activation(message):
 
 @bot.message_handler(func=lambda m: m.text == "🎲 Сгенерировать ключ (Админ)")
 def generate_key_handler(message):
-    username = message.from_user.username
-    if not username or username.lower() not in ADMIN_USERNAMES:
+    if not is_admin(message):
         bot.send_message(message.chat.id, "❌ У вас нет прав администратора.", parse_mode="Markdown")
         return
 
     new_key = generate_key_code()
-    create_license_in_firebase(new_key, 30, "30 дней (Админ)", f"admin_{username}")
+    create_license_in_firebase(new_key, 30, "30 дней (Админ)", f"admin_{message.from_user.username or message.from_user.id}")
     bot.send_message(
         message.chat.id,
         f"🎲 **Новый ключ (30 дней):**\n`{new_key}`\n\n✅ _Записан в Firebase, готов к вводу на ПК._",
