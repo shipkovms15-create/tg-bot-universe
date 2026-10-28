@@ -198,7 +198,14 @@ def tariff_selected(call):
         return
 
     pay_url = "https://t.me/molodoypacanzatazit"
-    markup = types.InlineKeyboardMarkup()
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    
+    # Ссылки на документы пользователя
+    markup.add(
+        types.InlineKeyboardButton("📜 Пользовательское соглашение", url="https://telegra.ph/PUBLICHNAYA-OFERTA-08-12-15"),
+        types.InlineKeyboardButton("🔒 Политика конфиденциальности", url="https://telegra.ph/POLITIKA-KONFIDENCIALNOSTI-08-12-99")
+    )
+    # Кнопки оплаты
     markup.add(types.InlineKeyboardButton("🔗 Оплатить счет", url=pay_url))
     markup.add(types.InlineKeyboardButton("🔄 Проверить оплату", callback_data=f"check_pay_{tariff_key}"))
     
@@ -208,6 +215,7 @@ def tariff_selected(call):
         text=(
             f"🛒 **Выбран тариф:** {tariff['name']}\n"
             f"💰 **К оплате:** `{tariff['price']} руб.`\n\n"
+            f"⚠️ *Нажимая кнопку оплаты, вы подтверждаете свое согласие с Пользовательским соглашением и Политикой конфиденциальности.*\n\n"
             f"1. Нажмите **«Оплатить счет»**.\n"
             f"2. После перевода нажмите **«Проверить оплату»** для получения ключа."
         ),
