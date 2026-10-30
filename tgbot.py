@@ -39,6 +39,9 @@ FIREBASE_DB_URL = os.environ.get("FIREBASE_DB_URL", "https://universeai-1e63b-de
 ADMIN_USERNAMES = [u.strip().lower() for u in os.environ.get("ADMIN_USERNAMES", "molodoypacanzatazit").split(",")]
 PRIVATE_CHANNEL_LINK = os.environ.get("PRIVATE_CHANNEL_LINK", "https://t.me/+L6ELmXSLFw9lNjMy")
 
+# Укажи здесь свою ссылку на донат от DonationAlerts (например: https://www.donationalerts.com/r/твой_ник)
+DONATION_ALERTS_URL = os.environ.get("DONATION_ALERTS_URL", "https://www.donationalerts.com/r/universeaistudio")
+
 TARIFFS = {
     "30": {"days": 30, "price": 150, "name": "30 дней"},
     "90": {"days": 90, "price": 250, "name": "90 дней"},
@@ -205,18 +208,16 @@ def tariff_selected(call):
         return
 
     user_id = call.from_user.id
-    my_yoomoney_wallet = "4100119671759789"
     
-    comment = f"Universe_AI_ID_{user_id}"
-    encoded_comment = comment.replace(" ", "%20")
-    pay_url = f"https://yoomoney.ru/quickpay/confirm.xml?receiver={my_yoomoney_wallet}&quickpay-form=button&sum={tariff['price']}&comment={encoded_comment}"
+    # Формируем ссылку на DonationAlerts с предзаполненной суммой и сообщением-подсказкой
+    pay_url = f"{DONATION_ALERTS_URL}?amount={tariff['price']}&message=Universe_AI_ID_{user_id}"
 
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
         types.InlineKeyboardButton("📜 Пользовательское соглашение", url="https://telegra.ph/PUBLICHNAYA-OFERTA-08-12-15"),
         types.InlineKeyboardButton("🔒 Политика конфиденциальности", url="https://telegra.ph/POLITIKA-KONFIDENCIALNOSTI-08-12-99")
     )
-    markup.add(types.InlineKeyboardButton("🔗 Оплатить через ЮMoney / СБП", url=pay_url))
+    markup.add(types.InlineKeyboardButton("🔗 Оплатить через DonationAlerts", url=pay_url))
     markup.add(types.InlineKeyboardButton("🔄 Проверить оплату", callback_data=f"check_pay_{tariff_key}"))
     
     bot.edit_message_text(
@@ -226,8 +227,8 @@ def tariff_selected(call):
             f"🛒 Выбран тариф: {tariff['name']}\n"
             f"💰 К оплате: `{tariff['price']} руб.`\n\n"
             f"⚠️ *Нажимая кнопку оплаты, вы подтверждаете свое согласие с Пользовательским соглашением и Политикой конфиденциальности.*\n\n"
-            f"1. Нажмите «Оплатить через ЮMoney / СБП».\n"
-            f"2. После перевода нажмите «Проверить оплату» для получения ключа."
+            f"1. Нажмите «Оплатить через DonationAlerts».\n"
+            f"2. Совершите перевод и после этого нажмите «Проверить оплату»."
         ),
         parse_mode="Markdown",
         reply_markup=markup
