@@ -363,20 +363,63 @@ def process_key_activation(message):
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Ошибка Firebase: {e}", parse_mode="Markdown")
 
+# === ИЗМЕНЕННЫЙ БЛОК ДЛЯ АДМИН-ГЕНЕРАЦИИ КЛЮЧЕЙ ===
+
 @bot.message_handler(func=lambda m: m.text == "🎲 Сгенерировать ключ (Админ)")
 def generate_key_handler(message):
     if not is_admin(message):
         bot.send_message(message.chat.id, "❌ У вас нет прав администратора.", parse_mode="Markdown")
         return
 
-    new_key = generate_key_code()
-    create_license_in_firebase(new_key, 30, "30 дней (Админ)", f"admin_{message.from_user.username or message.from_user.id}")
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("30 дней", callback_data="adm_gen_30"),
+        types.InlineKeyboardButton("90 дней", callback_data="adm_gen_90"),
+        types.InlineKeyboardButton("365 дней", callback_data="adm_gen_365"),
+        types.InlineKeyboardButton("Навсегда", callback_data="adm_gen_lifetime")
+    )
     bot.send_message(
         message.chat.id,
-        f"🎲 **Новый ключ (30 дней):**\n`{new_key}`\n\n✅ _Записан в Firebase, готов к вводу на ПК._",
-        parse_mode="Markdown"
+        "🎲 **Выбери срок действия ключа для генерации:**",
+        parse_mode="Markdown",
+        reply_markup=markup
     )
 
+@bot.callback_query_handler(func=lambda call: call.data.startswith("adm_gen_"))
+def admin_generate_callback(call):
+    if not is_admin(call.message):
+        bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
+        return
+
+    days_key = call.data.replace("adm_gen_", "")
+    
+    # Настраиваем дни и название по выбранной кнопке
+    if days_key == "30":
+        days, name = 30, "30 дней (Админ)"
+    elif days_key == "90":
+        days, name = 90, "90 дней (Админ)"
+    elif days_key == "365":
+        days, name = 365, "365 дней (Админ)"
+    elif days_key == "lifetime":
+        days, name = 36500, "Навсегда (Админ)"
+    else:
+        return
+
+    new_key = generate_key_code()
+    create_license_in_firebase(new_key, days, name, f"admin_{call.from_user.username or call.from_user.id}")
+    
+    bot.answer_callback_query(call.id, "✅ Ключ успешно сгенерирован!", show_alert=True)
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text=(
+            f"🎲 **Сгенерирован новый ключ ({name}):**\n"
+            f"`{new_key}`\n\n"
+            f"✅ _Записан в Firebase, готов к выдаче._"
+        ),
+        parse_mode="Markdown"
+    )
+    
 @bot.message_handler(func=lambda m: m.text == "💻 О программе")
 def about_handler(message):
     about_text = (
