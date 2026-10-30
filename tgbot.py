@@ -4,6 +4,7 @@ import time
 import random
 import string
 import threading
+import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import telebot
 from telebot import types
@@ -38,11 +39,10 @@ TOKEN = os.environ.get("BOT_TOKEN", "8503313877:AAEonBkSLpmTLZ4c-aCmpOAWKnCLNZRS
 FIREBASE_DB_URL = os.environ.get("FIREBASE_DB_URL", "https://universeai-1e63b-default-rtdb.europe-west1.firebasedatabase.app/")
 ADMIN_USERNAMES = [u.strip().lower() for u in os.environ.get("ADMIN_USERNAMES", "molodoypacanzatazit").split(",")]
 PRIVATE_CHANNEL_LINK = os.environ.get("PRIVATE_CHANNEL_LINK", "https://t.me/+L6ELmXSLFw9lNjMy")
+DONATION_ALERTS_URL = "https://www.donationalerts.com/r/universeaistudio"
 
-# Публичный ТГ-канал программы (укажи юзернейм без @ или с @, например: "universeai_news")
-PUBLIC_CHANNEL_USERNAME = os.environ.get("PUBLIC_CHANNEL_USERNAME", "universeai_news")
-
-DONATION_ALERTS_URL = os.environ.get("DONATION_ALERTS_URL", "https://www.donationalerts.com/r/universeaistudio")
+# Сюда вставляешь свой API Token / Widget Token от DonationAlerts
+DA_API_TOKEN = os.environ.get("DA_API_TOKEN", "ТВОЙ_DA_API_TOKEN")
 
 TARIFFS = {
     "30": {"days": 30, "price": 150, "name": "30 дней"},
@@ -94,7 +94,7 @@ init_firebase()
 
 bot = telebot.TeleBot(TOKEN)
 
-# === 4. РАБОТА С БАЗОЙ ДАННЫХ И ПРОВЕРКА ПОДПИСКИ ===
+# === 4. РАБОТА С БАЗОЙ ДАННЫХ И API DONATIONALERTS ===
 def generate_key_code():
     part1 = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
     part2 = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
@@ -143,15 +143,25 @@ def is_admin(message):
         return True
     return False
 
-def check_channel_subscription(user_id):
+# Реальная проверка пожертвований через API DonationAlerts
+def check_donationalerts_payment(user_id, required_amount):
     try:
-        chat_member = bot.get_chat_member(f"@{PUBLIC_CHANNEL_USERNAME.replace('@', '')}", user_id)
-        if chat_member.status in ['member', 'administrator', 'creator']:
-            return True
+        headers = {"Authorization": f"Bearer {DA_API_TOKEN}"}
+        response = requests.get("https://www.donationalerts.com/api/v1/alerts/donations", headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            donations = response.json().get("data", [])
+            target_comment = f"Universe_AI_ID_{user_id}"
+            
+            for donation in donations:
+                message_text = str(donation.get("message", ""))
+                amount = float(donation.get("amount", 0))
+                
+                # Проверяем совпадение ID в сообщении и то, что сумма не меньше нужной
+                if target_comment in message_text and amount >= required_amount:
+                    return True
     except Exception as e:
-        print(f"[Subscription Check Error]: {e}")
-        # Если бот не админ в канале или ошибка апи, пропускаем чтобы не ломать бота, но лучше сделать бота админом канала
-        return True 
+        print(f"[DA API Error]: {e}")
     return False
 
 # === 5. МЕНЮ ===
@@ -176,52 +186,14 @@ def main_menu(message):
 # === 6. ОБРАБОТЧИКИ СООБЩЕНИЙ ===
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
-    user_id = message.from_user.id
     username = message.from_user.username
-    
-    # Проверяем подписку на публичный канал
-    if PUBLIC_CHANNEL_USERNAME and not check_channel_subscription(user_id):
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(types.InlineKeyboardButton("📢 Подписаться на канал", url=f"https://t.me/{PUBLIC_CHANNEL_USERNAME.replace('@', '')}"))
-        markup.add(types.InlineKeyboardButton("✅ Я подписался", callback_data="check_sub"))
-        
-        bot.send_message(
-            message.chat.id,
-            f"🔒 **Для использования бота необходимо подписаться на наш официальный канал!**\n\n"
-            f"📢 Подпишись на @{PUBLIC_CHANNEL_USERNAME.replace('@', '')}, а затем нажми кнопку ниже.",
-            parse_mode="Markdown",
-            reply_markup=markup
-        )
-        return
-
-    save_or_update_user(user_id, username)
+    save_or_update_user(message.from_user.id, username)
     welcome_text = (
         f"👋 Привет, **{message.from_user.first_name}**!\n\n"
         f"Добро пожаловать в бота управления **Universe AI**.\n"
         f"Здесь вы можете приобрести и активировать ключ для настольной программы."
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=main_menu(message))
-
-@bot.callback_query_handler(func=lambda call: call.data == "check_sub")
-def verify_subscription(call):
-    user_id = call.from_user.id
-    if check_channel_subscription(user_id):
-        bot.answer_callback_query(call.id, "Спасибо за подписку!", show_alert=False)
-        save_or_update_user(user_id, call.from_user.username)
-        
-        welcome_text = (
-            f"🎉 **Подписка подтверждена!**\n\n"
-            f"Добро пожаловать в бота управления **Universe AI**."
-        )
-        bot.edit_message_text(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            text=welcome_text,
-            parse_mode="Markdown"
-        )
-        bot.send_message(call.message.chat.id, "Главное меню:", reply_markup=main_menu(call.message))
-    else:
-        bot.answer_callback_query(call.id, "❌ Вы еще не подписались на канал!", show_alert=True)
 
 @bot.message_handler(func=lambda m: m.text == "👤 Мой профиль")
 def profile_handler(message):
@@ -259,27 +231,27 @@ def tariff_selected(call):
         return
 
     user_id = call.from_user.id
-    
-    # Формируем ссылку на DonationAlerts с автоматической суммой и комментарием
-    pay_url = f"{DONATION_ALERTS_URL}?amount={tariff['price']}&message=Universe_AI_ID_{user_id}"
+    pay_url = f"{DONATION_ALERTS_URL}?message=Universe_AI_ID_{user_id}"
 
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
         types.InlineKeyboardButton("📜 Пользовательское соглашение", url="https://telegra.ph/PUBLICHNAYA-OFERTA-08-12-15"),
         types.InlineKeyboardButton("🔒 Политика конфиденциальности", url="https://telegra.ph/POLITIKA-KONFIDENCIALNOSTI-08-12-99")
     )
-    markup.add(types.InlineKeyboardButton("🔗 Оплатить через DonationAlerts", url=pay_url))
+    markup.add(types.InlineKeyboardButton("🔗 Перейти к оплате", url=pay_url))
     markup.add(types.InlineKeyboardButton("🔄 Проверить оплату", callback_data=f"check_pay_{tariff_key}"))
     
     bot.edit_message_text(
         chat_id=call.message.chat.id,
         message_id=call.message.message_id,
         text=(
-            f"🛒 Выбран тариф: {tariff['name']}\n"
-            f"💰 К оплате: `{tariff['price']} руб.`\n\n"
-            f"⚠️ *Нажимая кнопку оплаты, вы подтверждаете свое согласие с Пользовательским соглашением и Политикой конфиденциальности.*\n\n"
-            f"1. Нажмите «Оплатить через DonationAlerts» (сумма и ваш ID проставятся автоматически).\n"
-            f"2. Совершите перевод и после этого нажмите «Проверить оплату»."
+            f"🛒 **Выбран тариф:** {tariff['name']}\n"
+            f"💰 **К оплате:** `{tariff['price']} руб.`\n\n"
+            f"⚠️ **Инструкция по оплате:**\n"
+            f"1️⃣ Нажми кнопку **«Перейти к оплате»**.\n"
+            f"2️⃣ На открывшейся странице введи точную сумму: **{tariff['price']} руб.**\n"
+            f"3️⃣ Заверши перевод (твой Telegram ID подставится в комментарий автоматически).\n"
+            f"4️⃣ Вернись в бот и нажми **«Проверить оплату»**."
         ),
         parse_mode="Markdown",
         reply_markup=markup
@@ -292,7 +264,13 @@ def verify_payment_callback(call):
     user_id = call.from_user.id
     username = call.from_user.username
     
-    if tariff:
+    if not tariff:
+        return
+
+    # Запрос к DonationAlerts API для проверки реального доната
+    is_paid = check_donationalerts_payment(user_id, tariff['price'])
+
+    if is_paid:
         new_key = generate_key_code()
         days = tariff["days"]
         sub_text = f"Активна ({tariff['name']})" if days < 36500 else "Активна (Навсегда)"
@@ -304,18 +282,24 @@ def verify_payment_callback(call):
         })
         save_or_update_user(user_id, username, sub_expires=sub_text, active_key=new_key)
         
-        bot.answer_callback_query(call.id, "Оплата подтверждена!", show_alert=True)
+        bot.answer_callback_query(call.id, "✅ Платеж успешно найден и подтвержден!", show_alert=True)
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
             text=(
                 f"🎉 **Оплата успешно верифицирована!**\n\n"
                 f"📦 Тариф: {tariff['name']}\n"
-                f"🔑 **Твой ключ для ПК (нажми, чтобы скопировать):**\n||{new_key}||\n\n"
-                f"Вставьте этот ключ в окно программы UniverseAI на компьютере.\n"
+                f"🔑 **Твой ключ для ПК (нажми, чтобы скопировать):**\n`{new_key}`\n\n"
+                f"Вставьте этот ключ в программу UniverseAI на компьютере.\n"
                 f"📥 Скачать программу: {PRIVATE_CHANNEL_LINK}"
             ),
             parse_mode="Markdown"
+        )
+    else:
+        bot.answer_callback_query(
+            call.id, 
+            "⏳ Платеж еще не поступил или не найден. Убедись, что перевел точную сумму и указал ID в комментарии, затем нажми снова.", 
+            show_alert=True
         )
 
 @bot.message_handler(func=lambda m: m.text == "🔑 Активировать ключ")
@@ -369,7 +353,7 @@ def process_key_activation(message):
         save_or_update_user(user_id, message.from_user.username, sub_expires=f"Активна ({tariff_name})", active_key=user_key)
         
         success_text = (
-            f"✅ **Ключ `||{user_key}||` успешно привязан к вашему профилю!**\n\n"
+            f"✅ **Ключ `{user_key}` успешно привязан к вашему профилю!**\n\n"
             f"📦 **Тариф:** {tariff_name}\n"
             f"💻 Теперь скопируйте его и вставьте в программу **UniverseAI** на ПК для полной разблокировки.\n\n"
             f"📥 **Скачать программу:** {PRIVATE_CHANNEL_LINK}"
@@ -385,43 +369,19 @@ def generate_key_handler(message):
         bot.send_message(message.chat.id, "❌ У вас нет прав администратора.", parse_mode="Markdown")
         return
 
-    msg = bot.send_message(
-        message.chat.id, 
-        "⏳ **Укажи длительность ключа в днях:**\n\n_Например: `7`, `30`, `90`, `365` или `36500` (для навсегда)_", 
+    new_key = generate_key_code()
+    create_license_in_firebase(new_key, 30, "30 дней (Админ)", f"admin_{message.from_user.username or message.from_user.id}")
+    bot.send_message(
+        message.chat.id,
+        f"🎲 **Новый ключ (30 дней):**\n`{new_key}`\n\n✅ _Записан в Firebase, готов к вводу на ПК._",
         parse_mode="Markdown"
     )
-    bot.register_next_step_handler(msg, process_admin_key_days)
-
-def process_admin_key_days(message):
-    try:
-        days = int(message.text.strip())
-        if days <= 0:
-            bot.send_message(message.chat.id, "❌ Число дней должно быть больше 0.")
-            return
-
-        tariff_label = f"{days} дней (Админ)" if days < 36500 else "Навсегда (Админ)"
-        new_key = generate_key_code()
-        
-        create_license_in_firebase(
-            key_code=new_key, 
-            duration_days=days, 
-            tariff_name=tariff_label, 
-            created_by=f"admin_{message.from_user.username or message.from_user.id}"
-        )
-        
-        bot.send_message(
-            message.chat.id,
-            f"🎲 **Новый ключ ({tariff_label}):**\n||{new_key}||\n\n✅ _Записан в Firebase, готов для конкурса или высылки!_",
-            parse_mode="Markdown"
-        )
-    except ValueError:
-        bot.send_message(message.chat.id, "❌ Пожалуйста, введи только целое число дней (например, `30`).")
 
 @bot.message_handler(func=lambda m: m.text == "💻 О программе")
 def about_handler(message):
     about_text = (
         "🤖 **Universe AI** — ваш персональный интеллектуальный голосовой помощник.\n\n"
-        "📌 **Версия:** 4.0 (Stable)\n"
+        "📌 **Версия:** 4.0 (Beta)\n"
         "⚡️ **Возможности:** умное управление системой, быстрый поиск, интеграция с передовыми языковыми моделями и кастомные голосовые движки.\n\n"
         "🛠 **Разработчик / Поддержка:** @molodoypacanzatazit"
     )
