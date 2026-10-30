@@ -308,7 +308,7 @@ def process_key_activation(message):
 
         if key_data.get("is_used", 0) == 1:
             bot.send_message(message.chat.id, "⚠️ **Этот ключ уже использован в программе на ПК!**", parse_mode="Markdown")
-return
+            return
 
         tariff_name = key_data.get("tariff_name", "Подписка")
         ref.update({
