@@ -382,7 +382,42 @@ def generate_key_handler(message):
         parse_mode="Markdown",
         reply_markup=markup
     )
-     
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("adm_gen_"))
+def admin_generate_callback(call):
+    username = call.from_user.username
+    if not username or username.lower() not in ADMIN_USERNAMES:
+        bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
+        return
+
+    days_key = call.data.replace("adm_gen_", "")
+    
+    if days_key == "30":
+        days, name = 30, "30 дней (Админ)"
+    elif days_key == "90":
+        days, name = 90, "90 дней (Админ)"
+    elif days_key == "365":
+        days, name = 365, "365 дней (Админ)"
+    elif days_key == "lifetime":
+        days, name = 36500, "Навсегда (Админ)"
+    else:
+        return
+
+    new_key = generate_key_code()
+    create_license_in_firebase(new_key, days, name, f"admin_{username or call.from_user.id}")
+    
+    bot.answer_callback_query(call.id, "✅ Ключ успешно сгенерирован!", show_alert=True)
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text=(
+            f"🎲 **Сгенерирован новый ключ ({name}):**\n"
+            f"`{new_key}`\n\n"
+            f"✅ _Записан в Firebase, готов к выдаче._"
+        ),
+        parse_mode="Markdown"
+    )
+    
 @bot.message_handler(func=lambda m: m.text == "💻 О программе")
 def about_handler(message):
     about_text = (
