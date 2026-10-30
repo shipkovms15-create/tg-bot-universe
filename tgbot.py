@@ -39,6 +39,9 @@ FIREBASE_DB_URL = os.environ.get("FIREBASE_DB_URL", "https://universeai-1e63b-de
 ADMIN_USERNAMES = [u.strip().lower() for u in os.environ.get("ADMIN_USERNAMES", "molodoypacanzatazit").split(",")]
 PRIVATE_CHANNEL_LINK = os.environ.get("PRIVATE_CHANNEL_LINK", "https://t.me/+L6ELmXSLFw9lNjMy")
 
+# Публичный ТГ-канал программы (укажи юзернейм без @ или с @, например: "universeai_news")
+PUBLIC_CHANNEL_USERNAME = os.environ.get("PUBLIC_CHANNEL_USERNAME", "universeai_news")
+
 DONATION_ALERTS_URL = os.environ.get("DONATION_ALERTS_URL", "https://www.donationalerts.com/r/universeaistudio")
 
 TARIFFS = {
@@ -91,7 +94,7 @@ init_firebase()
 
 bot = telebot.TeleBot(TOKEN)
 
-# === 4. РАБОТА С БАЗОЙ ДАННЫХ ===
+# === 4. РАБОТА С БАЗОЙ ДАННЫХ И ПРОВЕРКА ПОДПИСКИ ===
 def generate_key_code():
     part1 = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
     part2 = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
@@ -140,6 +143,17 @@ def is_admin(message):
         return True
     return False
 
+def check_channel_subscription(user_id):
+    try:
+        chat_member = bot.get_chat_member(f"@{PUBLIC_CHANNEL_USERNAME.replace('@', '')}", user_id)
+        if chat_member.status in ['member', 'administrator', 'creator']:
+            return True
+    except Exception as e:
+        print(f"[Subscription Check Error]: {e}")
+        # Если бот не админ в канале или ошибка апи, пропускаем чтобы не ломать бота, но лучше сделать бота админом канала
+        return True 
+    return False
+
 # === 5. МЕНЮ ===
 def main_menu(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -162,14 +176,52 @@ def main_menu(message):
 # === 6. ОБРАБОТЧИКИ СООБЩЕНИЙ ===
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
+    user_id = message.from_user.id
     username = message.from_user.username
-    save_or_update_user(message.from_user.id, username)
+    
+    # Проверяем подписку на публичный канал
+    if PUBLIC_CHANNEL_USERNAME and not check_channel_subscription(user_id):
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(types.InlineKeyboardButton("📢 Подписаться на канал", url=f"https://t.me/{PUBLIC_CHANNEL_USERNAME.replace('@', '')}"))
+        markup.add(types.InlineKeyboardButton("✅ Я подписался", callback_data="check_sub"))
+        
+        bot.send_message(
+            message.chat.id,
+            f"🔒 **Для использования бота необходимо подписаться на наш официальный канал!**\n\n"
+            f"📢 Подпишись на @{PUBLIC_CHANNEL_USERNAME.replace('@', '')}, а затем нажми кнопку ниже.",
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        return
+
+    save_or_update_user(user_id, username)
     welcome_text = (
         f"👋 Привет, **{message.from_user.first_name}**!\n\n"
         f"Добро пожаловать в бота управления **Universe AI**.\n"
         f"Здесь вы можете приобрести и активировать ключ для настольной программы."
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=main_menu(message))
+
+@bot.callback_query_handler(func=lambda call: call.data == "check_sub")
+def verify_subscription(call):
+    user_id = call.from_user.id
+    if check_channel_subscription(user_id):
+        bot.answer_callback_query(call.id, "Спасибо за подписку!", show_alert=False)
+        save_or_update_user(user_id, call.from_user.username)
+        
+        welcome_text = (
+            f"🎉 **Подписка подтверждена!**\n\n"
+            f"Добро пожаловать в бота управления **Universe AI**."
+        )
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=welcome_text,
+            parse_mode="Markdown"
+        )
+        bot.send_message(call.message.chat.id, "Главное меню:", reply_markup=main_menu(call.message))
+    else:
+        bot.answer_callback_query(call.id, "❌ Вы еще не подписались на канал!", show_alert=True)
 
 @bot.message_handler(func=lambda m: m.text == "👤 Мой профиль")
 def profile_handler(message):
@@ -207,6 +259,8 @@ def tariff_selected(call):
         return
 
     user_id = call.from_user.id
+    
+    # Формируем ссылку на DonationAlerts с автоматической суммой и комментарием
     pay_url = f"{DONATION_ALERTS_URL}?amount={tariff['price']}&message=Universe_AI_ID_{user_id}"
 
     markup = types.InlineKeyboardMarkup(row_width=1)
@@ -224,7 +278,7 @@ def tariff_selected(call):
             f"🛒 Выбран тариф: {tariff['name']}\n"
             f"💰 К оплате: `{tariff['price']} руб.`\n\n"
             f"⚠️ *Нажимая кнопку оплаты, вы подтверждаете свое согласие с Пользовательским соглашением и Политикой конфиденциальности.*\n\n"
-            f"1. Нажмите «Оплатить через DonationAlerts».\n"
+            f"1. Нажмите «Оплатить через DonationAlerts» (сумма и ваш ID проставятся автоматически).\n"
             f"2. Совершите перевод и после этого нажмите «Проверить оплату»."
         ),
         parse_mode="Markdown",
@@ -325,7 +379,6 @@ def process_key_activation(message):
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Ошибка Firebase: {e}", parse_mode="Markdown")
 
-# === ГЕНЕРАЦИЯ КЛЮЧЕЙ ДЛЯ АДМИНА С ВЫБОРОМ ДНЕЙ ===
 @bot.message_handler(func=lambda m: m.text == "🎲 Сгенерировать ключ (Админ)")
 def generate_key_handler(message):
     if not is_admin(message):
