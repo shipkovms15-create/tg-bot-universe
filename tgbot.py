@@ -207,7 +207,6 @@ def tariff_selected(call):
     user_id = call.from_user.id
     my_yoomoney_wallet = "4100119671759789"
     
-    # Генерация рабочей ссылки ЮMoney Quickpay
     comment = f"Universe_AI_ID_{user_id}"
     encoded_comment = comment.replace(" ", "%20")
     pay_url = f"https://yoomoney.ru/quickpay/confirm.xml?receiver={my_yoomoney_wallet}&quickpay-form=button&sum={tariff['price']}&comment={encoded_comment}"
@@ -346,7 +345,7 @@ def generate_key_handler(message):
 def about_handler(message):
     about_text = (
         "🤖 **Universe AI** — ваш персональный интеллектуальный голосовой помощник.\n\n"
-        "📌 **Версия:** 4.0 (Beta)\n"
+        "📌 **Версия:** 4.0 (Stable)\n"
         "⚡️ **Возможности:** умное управление системой, быстрый поиск, интеграция с передовыми языковыми моделями и кастомные голосовые движки.\n\n"
         "🛠 **Разработчик / Поддержка:** @molodoypacanzatazit"
     )
