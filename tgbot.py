@@ -346,9 +346,9 @@ def generate_key_handler(message):
 def about_handler(message):
     about_text = (
         "🤖 **Universe AI** — ваш персональный интеллектуальный голосовой помощник.\n\n"
-        "📌 **Версия:** 4.0 (Stable)\n"
+        "📌 **Версия:** 4.0 (Beta)\n"
         "⚡️ **Возможности:** умное управление системой, быстрый поиск, интеграция с передовыми языковыми моделями и кастомные голосовые движки.\n\n"
-        f"📥 **Скачать дистрибутив:** {PRIVATE_CHANNEL_LINK}\n"
+        f"📥 **Канал программы:** {PRIVATE_CHANNEL_LINK}\n"
         "🛠 **Разработчик / Поддержка:** @molodoypacanzatazit"
     )
     bot.send_message(message.chat.id, about_text, parse_mode="Markdown")
