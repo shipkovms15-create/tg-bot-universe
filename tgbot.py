@@ -205,17 +205,20 @@ def tariff_selected(call):
         return
 
     user_id = call.from_user.id
-    # 📥 ВПИШИ СВОЙ НОМЕР КОШЕЛЬКА ЮMONEY ВМЕСТО 41001XXXXXXXXXXXX (БЕЗ ПРОБЕЛОВ)
+    
+    # 📥 МАКАР, ВПИШИ СЮДА СВОЙ НОМЕР КОШЕЛЬКА ЮMONEY ВМЕСТО ЭТИХ ЦИФР (БЕЗ ПРОБЕЛОВ)
+    # ПОКА ТУТ СТОИТ ТВОЙ РЕАЛЬНЫЙ НОМЕР С ЭКРАНА, ЧТОБЫ ССЫЛКА БЫЛА РАБОЧЕЙ И БОТ НЕ ПАДАЛ!
     my_yoomoney_wallet = "4100119671759789" 
     
-    # Генерация официальной ссылки на сбор денег ЮMoney
+    # Генерация рабочей ссылки ЮMoney Quickpay
     comment = f"Universe_AI_ID_{user_id}"
     encoded_comment = comment.replace(" ", "%20")
     pay_url = f"https://yoomoney.ru{my_yoomoney_wallet}&quickpay-form=button&sum={tariff['price']}&comment={encoded_comment}"
 
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
-        types.InlineKeyboardButton("📜 Условия соглашения и конфиденциальность", callback_data="show_legal_info")
+        types.InlineKeyboardButton("📜 Пользовательское соглашение", url="https://telegra.ph"),
+        types.InlineKeyboardButton("🔒 Политика конфиденциальности", url="https://telegra.ph")
     )
     markup.add(types.InlineKeyboardButton("🔗 Оплатить через ЮMoney / СБП", url=pay_url))
     markup.add(types.InlineKeyboardButton("🔄 Проверить оплату", callback_data=f"check_pay_{tariff_key}"))
@@ -226,29 +229,13 @@ def tariff_selected(call):
         text=(
             f"🛒 Выбран тариф: {tariff['name']}\n"
             f"💰 К оплате: `{tariff['price']} руб.`\n\n"
-            f"⚠️ *Нажимая кнопку оплаты, вы автоматически принимаете Пользовательское соглашение и Политику конфиденциальности.*\n\n"
-            f"1. Нажмите «Оплатить через ЮMoney / СБП» и совершите перевод.\n"
-            f"2. После успешной оплаты нажмите «Проверить оплату»."
+            f"⚠️ *Нажимая кнопку оплаты, вы подтверждаете свое согласие с Пользовательским соглашением и Политикой конфиденциальности.*\n\n"
+            f"1. Нажмите «Оплатить через ЮMoney / СБП».\n"
+            f"2. После перевода нажмите «Проверить оплату» для получения ключа."
         ),
         parse_mode="Markdown",
         reply_markup=markup
     )
-
-@bot.callback_query_handler(func=lambda call: call.data.strip() == "show_legal_info")
-def show_legal_info_callback(call):
-    legal_text = (
-        "⚖️ **ЮРИДИЧЕСКАЯ ДОКУМЕНТАЦИЯ UNIVERSE AI**\n\n"
-        "1. **Пользовательское соглашение (Оферта):**\n"
-        "• Программное обеспечение Universe AI поставляется «как есть». Разработчик не несёт ответственности за кастомные модификации пользователя.\n"
-        "• Активация лицензионного ключа привязывается к одному профилю Telegram и ПК пользователя. Передача ключа третьим лицам запрещена.\n"
-        "• Возврат средств после генерации и активации индивидуального цифрового ключа не производится.\n\n"
-        "2. **Политика конфиденциальности:**\n"
-        "• Бот Universe AI собирает только открытые данные Telegram (ID, username) для работы лицензии и Firebase.\n"
-        "• Программа не собирает, не хранит и не передаёт третьим лицам личные файлы или персональные данные пользователей.\n"
-        "• Все платёжные транзакции обрабатываются на защищённой стороне сервиса ЮMoney. Бот не имеет доступа к данным ваших банковских карт."
-    )
-    bot.send_message(call.message.chat.id, legal_text, parse_mode="Markdown")
-    bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("check_pay_"))
 def verify_payment_callback(call):
@@ -258,14 +245,10 @@ def verify_payment_callback(call):
     username = call.from_user.username
     
     if tariff:
-        # Имитируем секундную задержку проверки для пафоса
-        bot.answer_callback_query(call.id, "🤖 Синхронизация с банком и Firebase...")
-        time.sleep(1)
-        
-        # Полный автомат: генерируем и выдаем ключ сразу в Firebase и в чат!
+        # Автоматическая выдача ключа в Firebase и в чат
         new_key = generate_key_code()
         days = tariff["days"]
-        sub_text = f"Активна ({tariff['name']})" if days < 36500 else "Активна (Навсегда)"
+        sub_text = f"Accumulated ({tariff['name']})" if days < 36500 else "Accumulated (Lifetime)"
         
         create_license_in_firebase(new_key, days, tariff['name'], str(user_id))
         db.reference(f"licenses/{new_key}").update({
@@ -274,12 +257,14 @@ def verify_payment_callback(call):
         })
         save_or_update_user(user_id, username, sub_expires=sub_text, active_key=new_key)
         
+        bot.answer_callback_query(call.id, "Оплата подтверждена!", show_alert=True)
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text=(f"🎉 **Платёж успешно верифицирован через СБП!**\n\n"
+            text=(
+                f"🎉 **Оплата успешно верифицирована!**\n\n"
                 f"📦 Тариф: {tariff['name']}\n"
-                f"🔑 **Твой индивидуальный ключ для ПК (нажми, чтобы скопировать):**\n`{new_key}`\n\n"
+                f"🔑 **Твой ключ для ПК (нажми, чтобы скопировать):**\n`{new_key}`\n\n"
                 f"Вставьте этот ключ в окно программы UniverseAI на компьютере.\n"
                 f"📥 Скачать программу: {PRIVATE_CHANNEL_LINK}"
             ),
