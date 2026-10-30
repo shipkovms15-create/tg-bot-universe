@@ -231,27 +231,27 @@ def tariff_selected(call):
         return
 
     user_id = call.from_user.id
-    pay_url = f"{DONATION_ALERTS_URL}?message=Universe_AI_ID_{user_id}"
+    payment_comment = f"Universe_AI_ID_{user_id}"
 
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
         types.InlineKeyboardButton("📜 Пользовательское соглашение", url="https://telegra.ph/PUBLICHNAYA-OFERTA-08-12-15"),
         types.InlineKeyboardButton("🔒 Политика конфиденциальности", url="https://telegra.ph/POLITIKA-KONFIDENCIALNOSTI-08-12-99")
     )
-    markup.add(types.InlineKeyboardButton("🔗 Перейти к оплате", url=pay_url))
+    markup.add(types.InlineKeyboardButton("🔗 Перейти к оплате", url=DONATION_ALERTS_URL))
     markup.add(types.InlineKeyboardButton("🔄 Проверить оплату", callback_data=f"check_pay_{tariff_key}"))
     
     bot.edit_message_text(
         chat_id=call.message.chat.id,
         message_id=call.message.message_id,
         text=(
-            f"🛒 **Выбран тариф:** {tariff['name']}\n"
-            f"💰 **К оплате:** `{tariff['price']} руб.`\n\n"
+            f"🛒 Выбран тариф: {tariff['name']}\n"
+            f"💰 К оплате: `{tariff['price']} руб.`\n\n"
             f"⚠️ **Инструкция по оплате:**\n"
-            f"1️⃣ Нажми кнопку **«Перейти к оплате»**.\n"
-            f"2️⃣ На открывшейся странице введи точную сумму: **{tariff['price']} руб.**\n"
-            f"3️⃣ Заверши перевод (твой Telegram ID подставится в комментарий автоматически).\n"
-            f"4️⃣ Вернись в бот и нажми **«Проверить оплату»**."
+            f"1️⃣ Скопируй этот комментарий (нажми на него):\n`{payment_comment}`\n"
+            f"2️⃣ Нажми кнопку «Перейти к оплате».\n"
+            f"3️⃣ Введи сумму {tariff['price']} руб. и вставь скопированный комментарий в поле сообщения.\n"
+            f"4️⃣ После оплаты вернись сюда и нажми «Проверить оплату»."
         ),
         parse_mode="Markdown",
         reply_markup=markup
