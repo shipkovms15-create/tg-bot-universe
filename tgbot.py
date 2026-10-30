@@ -39,7 +39,6 @@ FIREBASE_DB_URL = os.environ.get("FIREBASE_DB_URL", "https://universeai-1e63b-de
 ADMIN_USERNAMES = [u.strip().lower() for u in os.environ.get("ADMIN_USERNAMES", "molodoypacanzatazit").split(",")]
 PRIVATE_CHANNEL_LINK = os.environ.get("PRIVATE_CHANNEL_LINK", "https://t.me/+L6ELmXSLFw9lNjMy")
 
-# Укажи здесь свою ссылку на донат от DonationAlerts (например: https://www.donationalerts.com/r/твой_ник)
 DONATION_ALERTS_URL = os.environ.get("DONATION_ALERTS_URL", "https://www.donationalerts.com/r/universeaistudio")
 
 TARIFFS = {
@@ -208,8 +207,6 @@ def tariff_selected(call):
         return
 
     user_id = call.from_user.id
-    
-    # Формируем ссылку на DonationAlerts с предзаполненной суммой и сообщением-подсказкой
     pay_url = f"{DONATION_ALERTS_URL}?amount={tariff['price']}&message=Universe_AI_ID_{user_id}"
 
     markup = types.InlineKeyboardMarkup(row_width=1)
@@ -328,19 +325,44 @@ def process_key_activation(message):
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Ошибка Firebase: {e}", parse_mode="Markdown")
 
+# === ГЕНЕРАЦИЯ КЛЮЧЕЙ ДЛЯ АДМИНА С ВЫБОРОМ ДНЕЙ ===
 @bot.message_handler(func=lambda m: m.text == "🎲 Сгенерировать ключ (Админ)")
 def generate_key_handler(message):
     if not is_admin(message):
         bot.send_message(message.chat.id, "❌ У вас нет прав администратора.", parse_mode="Markdown")
         return
 
-    new_key = generate_key_code()
-    create_license_in_firebase(new_key, 30, "30 дней (Админ)", f"admin_{message.from_user.username or message.from_user.id}")
-    bot.send_message(
-        message.chat.id,
-        f"🎲 **Новый ключ (30 дней):**\n||{new_key}||\n\n✅ _Записан в Firebase, готов к вводу на ПК._",
+    msg = bot.send_message(
+        message.chat.id, 
+        "⏳ **Укажи длительность ключа в днях:**\n\n_Например: `7`, `30`, `90`, `365` или `36500` (для навсегда)_", 
         parse_mode="Markdown"
     )
+    bot.register_next_step_handler(msg, process_admin_key_days)
+
+def process_admin_key_days(message):
+    try:
+        days = int(message.text.strip())
+        if days <= 0:
+            bot.send_message(message.chat.id, "❌ Число дней должно быть больше 0.")
+            return
+
+        tariff_label = f"{days} дней (Админ)" if days < 36500 else "Навсегда (Админ)"
+        new_key = generate_key_code()
+        
+        create_license_in_firebase(
+            key_code=new_key, 
+            duration_days=days, 
+            tariff_name=tariff_label, 
+            created_by=f"admin_{message.from_user.username or message.from_user.id}"
+        )
+        
+        bot.send_message(
+            message.chat.id,
+            f"🎲 **Новый ключ ({tariff_label}):**\n||{new_key}||\n\n✅ _Записан в Firebase, готов для конкурса или высылки!_",
+            parse_mode="Markdown"
+        )
+    except ValueError:
+        bot.send_message(message.chat.id, "❌ Пожалуйста, введи только целое число дней (например, `30`).")
 
 @bot.message_handler(func=lambda m: m.text == "💻 О программе")
 def about_handler(message):
