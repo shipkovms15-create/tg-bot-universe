@@ -108,7 +108,8 @@ def create_license_in_firebase(key_code: str, duration_days: int, tariff_name: s
         "tg_claimed_username": None,
         "activated_at": None
     }
-    db.reference(f"licenses/{key_clean}").set(data)
+    db.
+reference(f"licenses/{key_clean}").set(data)
     return data
 
 def get_user_from_firebase(user_id: int):
@@ -163,8 +164,8 @@ def start_cmd(message):
     username = message.from_user.username
     save_or_update_user(message.from_user.id, username)
     welcome_text = (
-        f"👋 Привет, **{message.from_user.first_name}**!\n\n"
-        f"Добро пожаловать в бота управления **Universe AI**.\n"
+        f"👋 Привет, {message.from_user.first_name}!\n\n"
+        f"Добро пожаловать в бота управления Universe AI.\n"
         f"Здесь вы можете приобрести и активировать ключ для настольной программы."
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=main_menu(message))
@@ -175,10 +176,10 @@ def profile_handler(message):
     sub = user_data.get("sub_expires", "Не активна") if user_data else "Не активна"
     active_key = user_data.get("active_key", "Отсутствует") if user_data else "Отсутствует"
     text = (
-        f"🆔 **Твой ID:** `{message.from_user.id}`\n"
-        f"👤 **Юзернейм:** @{message.from_user.username or 'отсутствует'}\n"
-        f"💎 **Статус подписки:** `{sub}`\n"
-        f"🔑 **Последний ключ:** `{active_key}`"
+        f"🆔 Твой ID: `{message.from_user.id}`\n"
+        f"👤 Юзернейм: @{message.from_user.username or 'отсутствует'}\n"
+        f"💎 Статус подписки: `{sub}`\n"
+        f"🔑 Последний ключ: `||{active_key}||`"
     )
     bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
@@ -205,20 +206,18 @@ def tariff_selected(call):
         return
 
     user_id = call.from_user.id
-    
-    # 📥 МАКАР, ВПИШИ СЮДА СВОЙ НОМЕР КОШЕЛЬКА ЮMONEY ВМЕСТО ЭТИХ ЦИФР (БЕЗ ПРОБЕЛОВ)
-    # ПОКА ТУТ СТОИТ ТВОЙ РЕАЛЬНЫЙ НОМЕР С ЭКРАНА, ЧТОБЫ ССЫЛКА БЫЛА РАБОЧЕЙ И БОТ НЕ ПАДАЛ!
-    my_yoomoney_wallet = "4100119671759789" 
+    my_yoomoney_wallet = "4100119671759789"
     
     # Генерация рабочей ссылки ЮMoney Quickpay
     comment = f"Universe_AI_ID_{user_id}"
     encoded_comment = comment.replace(" ", "%20")
-    pay_url = f"https://yoomoney.ru{my_yoomoney_wallet}&quickpay-form=button&sum={tariff['price']}&comment={encoded_comment}"
+    pay_url = f"https://yoomoney.ru/quickpay/confirm.xml?receiver={my_yoomoney_wallet}&quickpay-form=button&sum={tariff['price']}&comment={encoded_comment}"
 
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
-        types.InlineKeyboardButton("📜 Пользовательское соглашение", url="https://telegra.ph"),
-        types.InlineKeyboardButton("🔒 Политика конфиденциальности", url="https://telegra.ph")
+        types.InlineKeyboardButton("📜 Пользовательское соглашение", url="https://telegra.ph/PUBLICHNAYA-OFERTA-08-12-15"),
+        types.
+InlineKeyboardButton("🔒 Политика конфиденциальности", url="https://telegra.ph/POLITIKA-KONFIDENCIALNOSTI-08-12-99")
     )
     markup.add(types.InlineKeyboardButton("🔗 Оплатить через ЮMoney / СБП", url=pay_url))
     markup.add(types.InlineKeyboardButton("🔄 Проверить оплату", callback_data=f"check_pay_{tariff_key}"))
@@ -245,10 +244,9 @@ def verify_payment_callback(call):
     username = call.from_user.username
     
     if tariff:
-        # Автоматическая выдача ключа в Firebase и в чат
         new_key = generate_key_code()
         days = tariff["days"]
-        sub_text = f"Accumulated ({tariff['name']})" if days < 36500 else "Accumulated (Lifetime)"
+        sub_text = f"Активна ({tariff['name']})" if days < 36500 else "Активна (Навсегда)"
         
         create_license_in_firebase(new_key, days, tariff['name'], str(user_id))
         db.reference(f"licenses/{new_key}").update({
@@ -264,7 +262,7 @@ def verify_payment_callback(call):
             text=(
                 f"🎉 **Оплата успешно верифицирована!**\n\n"
                 f"📦 Тариф: {tariff['name']}\n"
-                f"🔑 **Твой ключ для ПК (нажми, чтобы скопировать):**\n`{new_key}`\n\n"
+                f"🔑 **Твой ключ для ПК (нажми, чтобы скопировать):**\n||{new_key}||\n\n"
                 f"Вставьте этот ключ в окно программы UniverseAI на компьютере.\n"
                 f"📥 Скачать программу: {PRIVATE_CHANNEL_LINK}"
             ),
@@ -281,7 +279,7 @@ def process_key_activation(message):
     user_id = message.from_user.id
     
     if not user_key.startswith("UNIVERSE-"):
-        bot.send_message(message.chat.id, "❌ **Неверный формат ключа!** Ключ должен начинаться с `UNIVERSE-`.", parse_mode="Markdown")
+        bot.send_message(message.chat.id, "❌ Неверный формат ключа! Ключ должен начинаться с UNIVERSE-.", parse_mode="Markdown")
         return
 
     try:
@@ -310,7 +308,7 @@ def process_key_activation(message):
 
         if key_data.get("is_used", 0) == 1:
             bot.send_message(message.chat.id, "⚠️ **Этот ключ уже использован в программе на ПК!**", parse_mode="Markdown")
-            return
+return
 
         tariff_name = key_data.get("tariff_name", "Подписка")
         ref.update({
@@ -322,10 +320,10 @@ def process_key_activation(message):
         save_or_update_user(user_id, message.from_user.username, sub_expires=f"Активна ({tariff_name})", active_key=user_key)
         
         success_text = (
-            f"✅ **Ключ `||{user_key}||` успешно привязан к вашему профилю!**\n\n"
-            f"📦 **Тариф:** {tariff_name}\n"
-            f"💻 Теперь скопируйте его и вставьте в программу **UniverseAI** на ПК для полной разблокировки.\n\n"
-            f"📥 **Скачать программу:** {PRIVATE_CHANNEL_LINK}"
+            f"✅ **Ключ ||{user_key}|| успешно привязан к вашему профилю!**\n\n"
+            f"📦 Тариф: {tariff_name}\n"
+            f"💻 Теперь скопируйте его и вставьте в программу UniverseAI на ПК для полной разблокировки.\n\n"
+            f"📥 Скачать программу: {PRIVATE_CHANNEL_LINK}"
         )
         bot.send_message(message.chat.id, success_text, parse_mode="Markdown")
         
@@ -349,20 +347,20 @@ def generate_key_handler(message):
 @bot.message_handler(func=lambda m: m.text == "💻 О программе")
 def about_handler(message):
     about_text = (
-        "🤖 **Universe AI** — ваш персональный интеллектуальный голосовой помощник.\n\n"
-        "📌 **Версия:** 4.0 (Stable)\n"
-        "⚡️ **Возможности:** умное управление системой, быстрый поиск, интеграция с передовыми языковыми моделями и кастомные голосовые движки.\n\n"
-        f"📥 **Скачать дистрибутив:** {PRIVATE_CHANNEL_LINK}\n"
-        "🛠 **Разработчик / Поддержка:** @molodoypacanzatazit"
+        "🤖 Universe AI — ваш персональный интеллектуальный голосовой помощник.\n\n"
+        "📌 Версия: 4.0 (Stable)\n"
+        "⚡️ Возможности: умное управление системой, быстрый поиск, интеграция с передовыми языковыми моделями и кастомные голосовые движки.\n\n"
+        f"📥 Скачать дистрибутив: {PRIVATE_CHANNEL_LINK}\n"
+        "🛠 Разработчик / Поддержка: @molodoypacanzatazit"
     )
     bot.send_message(message.chat.id, about_text, parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text == "ℹ️ Помощь")
 def help_handler(message):
-    bot.send_message(message.chat.id, "🛠 **Поддержка Universe AI:** @molodoypacanzatazit", parse_mode="Markdown")
+    bot.send_message(message.chat.id, "🛠 Поддержка Universe AI: @molodoypacanzatazit", parse_mode="Markdown")
 
 # === 7. ГЛАВНЫЙ ЦИКЛ 24/7 ===
-if __name__ == "__main__":
+if name == "__main__":
     print("[Бот]: Запущен и слушает Telegram...")
     while True:
         try:
