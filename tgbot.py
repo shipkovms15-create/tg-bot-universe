@@ -15,13 +15,94 @@ os.environ.pop('HTTPS_PROXY', None)
 os.environ.pop('http_proxy', None)
 os.environ.pop('https_proxy', None)
 
-# === 1. ВСТРОЕННЫЙ ВЕБ-СЕРВЕР ДЛЯ RENDER ===
+# === 1. ВСТРОЕННЫЙ ВЕБ-СЕРВЕР И ИИ-ШЛЮЗ ДЛЯ RENDER (БЕЗ VPN) ===
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header('Content-type', 'text/plain; charset=utf-8')
+        self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
-        self.wfile.write("UniverseAI Telegram Bot is ONLINE 24/7 via Firebase!".encode('utf-8'))
+        self.wfile.write("UniverseAI Telegram Bot & AI Gateway is ONLINE 24/7 via Firebase!".encode('utf-8'))
+
+    def do_POST(self):
+        # Шлюз для голосового ассистента на ПК
+        if self.path == "/ask_ai":
+            try:
+                content_len = int(self.headers.get('Content-Length', 0))
+                post_data = self.rfile.read(content_len)
+                req_json = json.loads(post_data.decode('utf-8'))
+                
+                user_prompt = req_json.get("prompt", "")
+                sys_prompt = req_json.get("system_prompt", "")
+                client_key = req_json.get("api_key", "").strip()
+                
+                # Используем ключ клиента или серверный ключ из переменных Render
+                api_key = client_key if client_key else os.environ.get("GEMINI_API_KEY", "")
+                
+                if not api_key:
+                    self.send_response(400)
+                    self.send_header('Content-type', 'application/json; charset=utf-8')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"error": "API-ключ Gemini не задан ни на сервере, ни в приложении!"}).encode('utf-8'))
+                    return
+
+                # Список моделей для автоподбора
+                models_to_try = [
+                    req_json.get("model", "gemini-2.5-flash"),
+                    "gemini-2.5-flash",
+                    "gemini-2.5-flash-lite",
+                    "gemini-3.8-flash",
+                    "gemini-2.0-flash"
+                ]
+
+                reply_text = None
+                last_error = ""
+
+                # Запрос идет из Франкфурта (Германия) — Google не блокирует по геолокации!
+                for model_name in models_to_try:
+                    clean_model = model_name.split('/')[-1]
+                    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent?key={api_key}"
+                    
+                    payload = {
+                        "contents": [{"parts": [{"text": user_prompt}]}]
+                    }
+                    if sys_prompt:
+                        payload["systemInstruction"] = {"parts": [{"text": sys_prompt}]}
+                    
+                    try:
+                        resp = requests.post(gemini_url, json=payload, headers={'Content-Type': 'application/json'}, timeout=25)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            reply_text = data['candidates'][0]['content']['parts'][0]['text']
+                            break
+                        else:
+                            last_error = f"[{clean_model}]: {resp.status_code} {resp.text}"
+                    except Exception as e:
+                        last_error = str(e)
+                        continue
+
+                if reply_text:
+                    self.send_response(200)
+                    self.send_header('Content-type', 'application/json; charset=utf-8')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"reply": reply_text}).encode('utf-8'))
+                else:
+                    self.send_response(500)
+                    self.send_header('Content-type', 'application/json; charset=utf-8')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"error": f"Сбой генерации: {last_error}"}).encode('utf-8'))
+                return
+
+            except Exception as e:
+                self.send_response(500)
+                self.send_header('Content-type', 'application/json; charset=utf-8')
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e)}).encode('utf-8'))
+                return
+
+        self.send_response(404)
+        self.end_headers()
 
     def log_message(self, format, *args):
         return
@@ -29,7 +110,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
 def start_health_server():
     port = int(os.environ.get("PORT", 8080))
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-    print(f"[Web-Server]: Сервер запущен на порту {port} для Render.")
+    print(f"[Web-Server]: Сервер и шлюз ИИ запущены на порту {port} для Render.")
     server.serve_forever()
 
 threading.Thread(target=start_health_server, daemon=True).start()
@@ -41,7 +122,7 @@ ADMIN_USERNAMES = [u.strip().lower() for u in os.environ.get("ADMIN_USERNAMES", 
 PRIVATE_CHANNEL_LINK = os.environ.get("PRIVATE_CHANNEL_LINK", "https://t.me/+L6ELmXSLFw9lNjMy")
 DONATION_ALERTS_URL = "https://www.donationalerts.com/r/universeaistudio"
 
-# Сюда вставляешь свой API Token / Widget Token от DonationAlerts
+# Токен DonationAlerts
 DA_API_TOKEN = os.environ.get("DA_API_TOKEN", "ТВОЙ_DA_API_TOKEN")
 
 TARIFFS = {
@@ -122,6 +203,7 @@ def get_user_from_firebase(user_id: int):
 def save_or_update_user(user_id: int, username: str, sub_expires: str = None, active_key: str = None):
     ref = db.reference(f"users/{user_id}")
     user_data = ref.get() or {}
+    
     user_data["user_id"] = user_id
     user_data["username"] = username or user_data.get("username", "Unknown")
     user_data["last_seen"] = int(time.time())
@@ -143,7 +225,6 @@ def is_admin(message):
         return True
     return False
 
-# Реальная проверка пожертвований через API DonationAlerts
 def check_donationalerts_payment(user_id, required_amount):
     try:
         headers = {"Authorization": f"Bearer {DA_API_TOKEN}"}
@@ -156,8 +237,6 @@ def check_donationalerts_payment(user_id, required_amount):
             for donation in donations:
                 message_text = str(donation.get("message", ""))
                 amount = float(donation.get("amount", 0))
-                
-                # Проверяем совпадение ID в сообщении и то, что сумма не меньше нужной
                 if target_comment in message_text and amount >= required_amount:
                     return True
     except Exception as e:
@@ -267,7 +346,6 @@ def verify_payment_callback(call):
     if not tariff:
         return
 
-    # Запрос к DonationAlerts API для проверки реального доната
     is_paid = check_donationalerts_payment(user_id, tariff['price'])
 
     if is_paid:
