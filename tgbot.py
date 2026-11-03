@@ -15,17 +15,16 @@ os.environ.pop('HTTPS_PROXY', None)
 os.environ.pop('http_proxy', None)
 os.environ.pop('https_proxy', None)
 
-# === 1. ВСТРОЕННЫЙ ВЕБ-СЕРВЕР И ИИ-ШЛЮЗ ДЛЯ RENDER (БЕЗ VPN) ===
+# === 1. ВСТРОЕННЫЙ ВЕБ-СЕРВЕР И ИИ-ШЛЮЗ ДЛЯ RENDER (ЖЕЛЕЗОБЕТОННАЯ ЗАЩИТА ОТ КРАШЕЙ) ===
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header('Content-type', 'text/plain; charset=utf-8')
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
-        self.wfile.write("UniverseAI Telegram Bot & AI Gateway is ONLINE 24/7 via Firebase!".encode('utf-8'))
+        self.wfile.write("UniverseAI Telegram Bot & AI Gateway is ONLINE!".encode('utf-8'))
 
     def do_POST(self):
-        # Шлюз для голосового ассистента на ПК
         if self.path == "/ask_ai":
             try:
                 content_len = int(self.headers.get('Content-Length', 0))
@@ -35,70 +34,58 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
                 user_prompt = req_json.get("prompt", "")
                 sys_prompt = req_json.get("system_prompt", "")
                 client_key = req_json.get("api_key", "").strip()
-                
-                # Используем ключ клиента или серверный ключ из переменных Render
                 api_key = client_key if client_key else os.environ.get("GEMINI_API_KEY", "")
                 
                 if not api_key:
-                    self.send_response(400)
-                    self.send_header('Content-type', 'application/json; charset=utf-8')
-                    self.end_headers()
-                    self.wfile.write(json.dumps({"error": "API-ключ Gemini не задан ни на сервере, ни в приложении!"}).encode('utf-8'))
-                    return
-
-                # Список моделей для автоподбора
-                models_to_try = [
-                    req_json.get("model", "gemini-2.5-flash"),
-                    "gemini-2.5-flash",
-                    "gemini-2.5-flash-lite",
-                    "gemini-3.8-flash",
-                    "gemini-2.0-flash"
-                ]
-
-                reply_text = None
-                last_error = ""
-
-                # Запрос идет из Франкфурта (Германия) — Google не блокирует по геолокации!
-                for model_name in models_to_try:
-                    clean_model = model_name.split('/')[-1]
-                    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent?key={api_key}"
-                    
-                    payload = {
-                        "contents": [{"parts": [{"text": user_prompt}]}]
-                    }
-                    if sys_prompt:
-                        payload["systemInstruction"] = {"parts": [{"text": sys_prompt}]}
-                    
-                    try:
-                        resp = requests.post(gemini_url, json=payload, headers={'Content-Type': 'application/json'}, timeout=25)
-                        if resp.status_code == 200:
-                            data = resp.json()
-                            reply_text = data['candidates'][0]['content']['parts'][0]['text']
-                            break
-                        else:
-                            last_error = f"[{clean_model}]: {resp.status_code} {resp.text}"
-                    except Exception as e:
-                        last_error = str(e)
-                        continue
-
-                if reply_text:
                     self.send_response(200)
                     self.send_header('Content-type', 'application/json; charset=utf-8')
                     self.send_header('Access-Control-Allow-Origin', '*')
                     self.end_headers()
+                    self.wfile.write(json.dumps({"error": "API-ключ Gemini не задан в приложении или на сервере!"}).encode('utf-8'))
+                    return
+
+                # Актуальные модели Google
+                models_to_try = ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-flash-latest"]
+                reply_text = None
+                last_error = ""
+
+                for model_name in models_to_try:
+                    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+                    payload = {"contents": [{"parts": [{"text": user_prompt}]}]}
+                    if sys_prompt:
+                        payload["systemInstruction"] = {"parts": [{"text": sys_prompt}]}
+                    
+                    try:
+                        resp = requests.post(gemini_url, json=payload, headers={'Content-Type': 'application/json'}, timeout=30)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            if "candidates" in data and len(data["candidates"]) > 0:
+                                reply_text = data['candidates'][0]['content']['parts'][0]['text']
+                                break
+                        else:
+                            last_error = f"[{model_name}]: {resp.status_code} {resp.text}"
+                    except Exception as ex:
+                        last_error = str(ex)
+                        continue
+
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+
+                if reply_text:
                     self.wfile.write(json.dumps({"reply": reply_text}).encode('utf-8'))
                 else:
-                    self.send_response(500)
-                    self.send_header('Content-type', 'application/json; charset=utf-8')
-                    self.end_headers()
-                    self.wfile.write(json.dumps({"error": f"Сбой генерации: {last_error}"}).encode('utf-8'))
+                    self.wfile.write(json.dumps({"error": f"Все модели отклонили запрос: {last_error}"}).encode('utf-8'))
                 return
 
             except Exception as e:
-                self.send_response(500)
+                # Безопасный возврат ошибки клиенту вместо обрыва сокета
+                self.send_response(200)
                 self.send_header('Content-type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
-                self.wfile.write(json.dumps({"error": str(e)}).encode('utf-8'))
+                self.wfile.write(json.dumps({"error": f"Критическая ошибка сервера: {str(e)}"}).encode('utf-8'))
                 return
 
         self.send_response(404)
@@ -110,7 +97,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
 def start_health_server():
     port = int(os.environ.get("PORT", 8080))
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-    print(f"[Web-Server]: Сервер и шлюз ИИ запущены на порту {port} для Render.")
+    print(f"[Web-Server]: Сервер запущен на порту {port} для Render.")
     server.serve_forever()
 
 threading.Thread(target=start_health_server, daemon=True).start()
@@ -122,7 +109,7 @@ ADMIN_USERNAMES = [u.strip().lower() for u in os.environ.get("ADMIN_USERNAMES", 
 PRIVATE_CHANNEL_LINK = os.environ.get("PRIVATE_CHANNEL_LINK", "https://t.me/+L6ELmXSLFw9lNjMy")
 DONATION_ALERTS_URL = "https://www.donationalerts.com/r/universeaistudio"
 
-# Токен DonationAlerts
+# Сюда вставляешь свой API Token / Widget Token от DonationAlerts
 DA_API_TOKEN = os.environ.get("DA_API_TOKEN", "ТВОЙ_DA_API_TOKEN")
 
 TARIFFS = {
@@ -237,6 +224,8 @@ def check_donationalerts_payment(user_id, required_amount):
             for donation in donations:
                 message_text = str(donation.get("message", ""))
                 amount = float(donation.get("amount", 0))
+                
+                # Проверяем совпадение ID в сообщении и то, что сумма не меньше нужной
                 if target_comment in message_text and amount >= required_amount:
                     return True
     except Exception as e:
@@ -295,6 +284,7 @@ def buy_handler(message):
             f"📦 {tariff['name']} — {tariff['price']} руб.", 
             callback_data=f"select_tariff_{key}"
         ))
+    
     bot.send_message(
         message.chat.id,
         "💳 **Выбери подходящий тариф подписки:**",
