@@ -15,16 +15,17 @@ os.environ.pop('HTTPS_PROXY', None)
 os.environ.pop('http_proxy', None)
 os.environ.pop('https_proxy', None)
 
-# === 1. ВСТРОЕННЫЙ ВЕБ-СЕРВЕР И ИИ-ШЛЮЗ ДЛЯ RENDER (ЖЕЛЕЗОБЕТОННАЯ ЗАЩИТА ОТ КРАШЕЙ) ===
+# === 1. ВСТРОЕННЫЙ ВЕБ-СЕРВЕР И ИИ-ШЛЮЗ ДЛЯ RENDER ===
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header('Content-type', 'text/plain; charset=utf-8')
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
-        self.wfile.write("UniverseAI Telegram Bot & AI Gateway is ONLINE!".encode('utf-8'))
+        self.wfile.write("UniverseAI Telegram Bot & AI Gateway is ONLINE 24/7 via Firebase!".encode('utf-8'))
 
     def do_POST(self):
+        # Шлюз для голосового ассистента на ПК
         if self.path == "/ask_ai":
             try:
                 content_len = int(self.headers.get('Content-Length', 0))
@@ -34,6 +35,8 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
                 user_prompt = req_json.get("prompt", "")
                 sys_prompt = req_json.get("system_prompt", "")
                 client_key = req_json.get("api_key", "").strip()
+                
+                # Используем ключ клиента или серверный ключ из переменных Render
                 api_key = client_key if client_key else os.environ.get("GEMINI_API_KEY", "")
                 
                 if not api_key:
@@ -41,31 +44,42 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
                     self.send_header('Content-type', 'application/json; charset=utf-8')
                     self.send_header('Access-Control-Allow-Origin', '*')
                     self.end_headers()
-                    self.wfile.write(json.dumps({"error": "API-ключ Gemini не задан в приложении или на сервере!"}).encode('utf-8'))
+                    self.wfile.write(json.dumps({"error": "API-ключ Gemini не задан ни на сервере, ни в приложении!"}).encode('utf-8'))
                     return
 
-                # Актуальные модели Google
-                models_to_try = ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-flash-latest"]
+                # Список моделей для автоподбора
+                models_to_try = [
+                    req_json.get("model", "gemini-2.5-flash"),
+                    "gemini-3.5-flash-lite",
+                    "gemini-3.8-flash",
+                    "gemini-2.5-flash",
+                    "gemini-flash-latest"
+                ]
+
                 reply_text = None
                 last_error = ""
 
                 for model_name in models_to_try:
-                    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
-                    payload = {"contents": [{"parts": [{"text": user_prompt}]}]}
+                    clean_model = model_name.split('/')[-1]
+                    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent?key={api_key}"
+                    
+                    payload = {
+                        "contents": [{"parts": [{"text": user_prompt}]}]
+                    }
                     if sys_prompt:
                         payload["systemInstruction"] = {"parts": [{"text": sys_prompt}]}
                     
                     try:
-                        resp = requests.post(gemini_url, json=payload, headers={'Content-Type': 'application/json'}, timeout=30)
+                        resp = requests.post(gemini_url, json=payload, headers={'Content-Type': 'application/json'}, timeout=25)
                         if resp.status_code == 200:
                             data = resp.json()
                             if "candidates" in data and len(data["candidates"]) > 0:
                                 reply_text = data['candidates'][0]['content']['parts'][0]['text']
                                 break
                         else:
-                            last_error = f"[{model_name}]: {resp.status_code} {resp.text}"
-                    except Exception as ex:
-                        last_error = str(ex)
+                            last_error = f"[{clean_model}]: {resp.status_code} {resp.text}"
+                    except Exception as e:
+                        last_error = str(e)
                         continue
 
                 self.send_response(200)
@@ -76,16 +90,15 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
                 if reply_text:
                     self.wfile.write(json.dumps({"reply": reply_text}).encode('utf-8'))
                 else:
-                    self.wfile.write(json.dumps({"error": f"Все модели отклонили запрос: {last_error}"}).encode('utf-8'))
+                    self.wfile.write(json.dumps({"error": f"Сбой генерации: {last_error}"}).encode('utf-8'))
                 return
 
             except Exception as e:
-                # Безопасный возврат ошибки клиенту вместо обрыва сокета
                 self.send_response(200)
                 self.send_header('Content-type', 'application/json; charset=utf-8')
                 self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
-                self.wfile.write(json.dumps({"error": f"Критическая ошибка сервера: {str(e)}"}).encode('utf-8'))
+                self.wfile.write(json.dumps({"error": str(e)}).encode('utf-8'))
                 return
 
         self.send_response(404)
@@ -119,7 +132,7 @@ TARIFFS = {
     "lifetime": {"days": 36500, "price": 700, "name": "Навсегда (Lifetime)"}
 }
 
-# === 3. ИНИЦИАЛИЗАЦИЯ FIREBASE ===
+# === 3. ИНИЦИАЛИЗАЦИЯ FIREBASE (БЕЗОПАСНАЯ, БЕЗ КРАШЕЙ) ===
 try:
     import firebase_admin
     from firebase_admin import credentials, db
@@ -127,36 +140,40 @@ except ImportError:
     raise ImportError("Установите: pip install firebase-admin")
 
 def init_firebase():
-    if firebase_admin._apps:
-        return
+    try:
+        if firebase_admin._apps:
+            return
 
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    candidates = [
-        "/etc/secrets/firebase_service_account.json",
-        "/etc/secrets/firebase_key.json",
-        os.path.join(base_dir, "firebase_service_account.json"),
-        os.path.join(base_dir, "firebase_key.json"),
-        "firebase_service_account.json",
-        "firebase_key.json"
-    ]
-    key_path = next((p for p in candidates if os.path.exists(p)), None)
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        candidates = [
+            "/etc/secrets/firebase_service_account.json",
+            "/etc/secrets/firebase_key.json",
+            os.path.join(base_dir, "firebase_service_account.json"),
+            os.path.join(base_dir, "firebase_key.json"),
+            "firebase_service_account.json",
+            "firebase_key.json"
+        ]
+        key_path = next((p for p in candidates if os.path.exists(p)), None)
 
-    if key_path:
-        print(f"[Firebase]: Читаем файл ключа: {key_path}")
-        cred = credentials.Certificate(key_path)
-    else:
-        env_creds_json = os.environ.get("FIREBASE_CREDENTIALS_JSON")
-        if env_creds_json:
-            print("[Firebase]: Читаем переменную FIREBASE_CREDENTIALS_JSON...")
-            cred_dict = json.loads(env_creds_json)
-            if "private_key" in cred_dict:
-                cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
-            cred = credentials.Certificate(cred_dict)
+        if key_path:
+            print(f"[Firebase]: Читаем файл ключа: {key_path}")
+            cred = credentials.Certificate(key_path)
         else:
-            raise FileNotFoundError("Файл ключа не найден ни в /etc/secrets/, ни в папке проекта!")
+            env_creds_json = os.environ.get("FIREBASE_CREDENTIALS_JSON")
+            if env_creds_json:
+                print("[Firebase]: Читаем переменную FIREBASE_CREDENTIALS_JSON...")
+                cred_dict = json.loads(env_creds_json)
+                if "private_key" in cred_dict:
+                    cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
+                cred = credentials.Certificate(cred_dict)
+            else:
+                print("[Firebase Warning]: Ключ не найден, бот запущен без Firebase.")
+                return
 
-    firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DB_URL})
-    print(f"[Firebase]: УСПЕШНОЕ ПОДКЛЮЧЕНИЕ К БАЗЕ: {FIREBASE_DB_URL}")
+        firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DB_URL})
+        print(f"[Firebase]: УСПЕШНОЕ ПОДКЛЮЧЕНИЕ К БАЗЕ: {FIREBASE_DB_URL}")
+    except Exception as e:
+        print(f"[Firebase Init Error - Игнорируем]: {e}")
 
 init_firebase()
 
